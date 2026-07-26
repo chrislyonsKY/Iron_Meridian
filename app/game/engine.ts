@@ -428,7 +428,9 @@ export class GameEngine {
 
     const spawn = this.getForwardSpawn();
     this.playerPosition.copy(spawn);
-    this.yaw = Math.atan2(-spawn.x, -spawn.z);
+    // Three.js cameras face local -Z. Aim the deployment view from the
+    // selected spawn toward the center of the battlefield.
+    this.yaw = Math.atan2(spawn.x, spawn.z);
     this.pitch = -0.03;
     this.phase = "playing";
     this.callbacks.onPhase("playing");
@@ -904,13 +906,24 @@ export class GameEngine {
 
     const sin = Math.sin(this.yaw);
     const cos = Math.cos(this.yaw);
+    // Camera-local forward is -Z and camera-local right is +X. Keep these
+    // basis vectors explicit so forward/strafe input cannot drift out of
+    // alignment with the direction the player is looking.
+    const forwardX = -sin;
+    const forwardZ = -cos;
+    const rightX = cos;
+    const rightZ = -sin;
     const desiredX =
       inputLength > 0
-        ? ((inputX / inputLength) * cos - (inputZ / inputLength) * sin) * speed
+        ? ((inputX / inputLength) * rightX +
+            (inputZ / inputLength) * forwardX) *
+          speed
         : 0;
     const desiredZ =
       inputLength > 0
-        ? ((inputX / inputLength) * sin + (inputZ / inputLength) * cos) * speed
+        ? ((inputX / inputLength) * rightZ +
+            (inputZ / inputLength) * forwardZ) *
+          speed
         : 0;
     this.playerVelocity.x = damp(this.playerVelocity.x, desiredX, groundedLambda(this.grounded), dt);
     this.playerVelocity.z = damp(this.playerVelocity.z, desiredZ, groundedLambda(this.grounded), dt);

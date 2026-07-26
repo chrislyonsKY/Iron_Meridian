@@ -101,6 +101,7 @@ const BOT_COUNT_PER_TEAM = 7;
 const BLUE = 0x39c4f4;
 const RED = 0xff654f;
 const NEUTRAL = 0xd9d3c7;
+const VEHICLE_DEPLOYMENT_YAW = MAIN_ROAD_ROTATION + Math.PI;
 
 const BOT_NAMES = [
   "Morrow",
@@ -2565,7 +2566,7 @@ export class GameEngine {
     teamPanel.castShadow = false;
 
     group.position.copy(this.world.vehicleSpawn);
-    group.rotation.y = MAIN_ROAD_ROTATION;
+    group.rotation.y = VEHICLE_DEPLOYMENT_YAW;
     this.scene.add(group);
     return {
       group,
@@ -2574,7 +2575,7 @@ export class GameEngine {
       health: 260,
       maxHealth: 260,
       speed: 0,
-      yaw: MAIN_ROAD_ROTATION,
+      yaw: VEHICLE_DEPLOYMENT_YAW,
       occupied: false,
       fireCooldown: 0,
       destroyed: false,
@@ -2730,8 +2731,8 @@ export class GameEngine {
     this.vehicle.group.visible = true;
     this.vehicle.health = this.vehicle.maxHealth;
     this.vehicle.speed = 0;
-    this.vehicle.yaw = MAIN_ROAD_ROTATION;
-    this.vehicle.group.rotation.y = MAIN_ROAD_ROTATION;
+    this.vehicle.yaw = VEHICLE_DEPLOYMENT_YAW;
+    this.vehicle.group.rotation.y = VEHICLE_DEPLOYMENT_YAW;
     this.vehicle.destroyed = false;
     this.vehicle.occupied = false;
   }

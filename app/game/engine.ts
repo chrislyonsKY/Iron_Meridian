@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
@@ -162,12 +163,12 @@ const CINEMATIC_GRADE_SHADER = {
       vec3 shadowTint = vec3(0.89, 0.96, 1.03);
       vec3 highlightTint = vec3(1.055, 1.012, 0.945);
       color *= mix(shadowTint, highlightTint, smoothstep(0.12, 0.86, luminance));
-      color = (color - 0.5) * 1.055 + 0.5;
+      color = (color - 0.5) * 1.08 + 0.5;
 
       float vignette = smoothstep(1.18, 0.24, length(centered * vec2(0.82, 1.0)));
       color *= mix(0.72, 1.0, vignette);
       float grain = hash12(gl_FragCoord.xy + fract(time) * 913.7) - 0.5;
-      color += grain * (0.006 + (1.0 - luminance) * 0.004);
+      color += grain * (0.007 + (1.0 - luminance) * 0.0045);
       color = mix(color, color * vec3(0.74, 0.22, 0.16), damage * (0.22 + length(centered) * 0.13));
       gl_FragColor = vec4(color, 1.0);
     }
@@ -182,6 +183,19 @@ function damp(current: number, target: number, lambda: number, dt: number): numb
   return THREE.MathUtils.lerp(current, target, 1 - Math.exp(-lambda * dt));
 }
 
+function dampAngle(
+  current: number,
+  target: number,
+  lambda: number,
+  dt: number,
+): number {
+  const delta = Math.atan2(
+    Math.sin(target - current),
+    Math.cos(target - current),
+  );
+  return current + delta * (1 - Math.exp(-lambda * dt));
+}
+
 export class GameEngine {
   private host: HTMLElement;
   private callbacks: GameCallbacks;
@@ -193,6 +207,7 @@ export class GameEngine {
   private composer: EffectComposer;
   private gradePass: ShaderPass;
   private bloomPass: UnrealBloomPass;
+  private gtaoPass: GTAOPass | null = null;
   private environmentMap: THREE.Texture | null = null;
   private environmentTarget: THREE.WebGLRenderTarget | null = null;
   private clock = new THREE.Clock();
@@ -289,7 +304,7 @@ export class GameEngine {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.04;
+    this.renderer.toneMappingExposure = 1;
     this.renderer.autoClear = false;
     this.renderer.domElement.className = "game-canvas";
     this.renderer.domElement.setAttribute(
@@ -301,18 +316,18 @@ export class GameEngine {
 
     this.scene.background = new THREE.Color(0x17283a);
     this.scene.fog = new THREE.FogExp2(
-      0xa1876d,
-      this.touchMode ? 0.0068 : 0.00455,
+      0x9b806b,
+      this.touchMode ? 0.0045 : 0.00275,
     );
     this.camera.rotation.order = "YXZ";
     this.scene.add(this.camera);
     this.viewScene.add(this.viewCamera);
     this.viewCamera.add(this.weaponRig);
 
-    const hemisphere = new THREE.HemisphereLight(0xbdd8ec, 0x4b392f, 1.18);
+    const hemisphere = new THREE.HemisphereLight(0xb5d3e5, 0x3d3029, 0.74);
     this.scene.add(hemisphere);
-    const sun = new THREE.DirectionalLight(0xffd5a2, 4.05);
-    sun.position.set(-92, 112, -105);
+    const sun = new THREE.DirectionalLight(0xffc98f, 5.15);
+    sun.position.set(-128, 58, -116);
     sun.castShadow = !this.touchMode;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.left = -150;
@@ -326,10 +341,10 @@ export class GameEngine {
     sun.shadow.radius = 2;
     sun.shadow.blurSamples = 12;
     this.scene.add(sun);
-    const warmFill = new THREE.DirectionalLight(0xe39b63, 0.46);
-    warmFill.position.set(90, 24, 80);
+    const warmFill = new THREE.DirectionalLight(0xe09962, 0.3);
+    warmFill.position.set(90, 18, 80);
     this.scene.add(warmFill);
-    const coolRim = new THREE.DirectionalLight(0x92b7cf, 0.38);
+    const coolRim = new THREE.DirectionalLight(0x8eb4c9, 0.27);
     coolRim.position.set(34, 42, -90);
     this.scene.add(coolRim);
 
@@ -355,11 +370,34 @@ export class GameEngine {
     renderTarget.samples = this.touchMode ? 0 : 2;
     this.composer = new EffectComposer(this.renderer, renderTarget);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
+    if (!this.touchMode) {
+      this.gtaoPass = new GTAOPass(this.scene, this.camera, 1, 1);
+      this.gtaoPass.blendIntensity = 0.62;
+      this.gtaoPass.updateGtaoMaterial({
+        radius: 3.2,
+        distanceExponent: 1.7,
+        thickness: 1.35,
+        distanceFallOff: 1,
+        scale: 1.05,
+        samples: 12,
+        screenSpaceRadius: true,
+      });
+      this.gtaoPass.updatePdMaterial({
+        radius: 5,
+        radiusExponent: 2,
+        rings: 2,
+        samples: 12,
+        lumaPhi: 10,
+        depthPhi: 2,
+        normalPhi: 3,
+      });
+      this.composer.addPass(this.gtaoPass);
+    }
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(1, 1),
-      this.touchMode ? 0.13 : 0.25,
+      this.touchMode ? 0.1 : 0.2,
       0.48,
-      0.76,
+      0.8,
     );
     this.composer.addPass(this.bloomPass);
     this.gradePass = new ShaderPass(CINEMATIC_GRADE_SHADER);
@@ -1763,24 +1801,24 @@ export class GameEngine {
     addBotMesh(
       new RoundedBoxGeometry(0.64, 0.51, 0.43, 3, 0.075),
       armor,
-      [0, 1.18, -0.035],
+      [0, 1.18, 0.035],
     );
     addBotMesh(
       new RoundedBoxGeometry(0.5, 0.12, 0.45, 3, 0.025),
       armor,
-      [0, 0.9, -0.025],
+      [0, 0.9, 0.025],
     );
     for (let pouch = -1; pouch <= 1; pouch += 1) {
       addBotMesh(
         new RoundedBoxGeometry(0.14, 0.19, 0.09, 2, 0.025),
         armor,
-        [pouch * 0.17, 1.04, -0.245],
+        [pouch * 0.17, 1.04, 0.245],
       );
     }
     addBotMesh(
       new RoundedBoxGeometry(0.4, 0.52, 0.16, 3, 0.05),
       armor,
-      [0, 1.2, 0.24],
+      [0, 1.2, -0.24],
     );
     addBotMesh(
       new THREE.CapsuleGeometry(0.12, 0.08, 4, 9),
@@ -1816,12 +1854,12 @@ export class GameEngine {
     addBotMesh(
       new THREE.BoxGeometry(0.3, 0.035, 0.25),
       armor,
-      [0, 1.82, -0.075],
+      [0, 1.82, 0.075],
     );
     addBotMesh(
       new RoundedBoxGeometry(0.32, 0.09, 0.055, 2, 0.018),
       rubber,
-      [0, 1.75, -0.185],
+      [0, 1.75, 0.185],
     );
     for (const side of [-1, 1]) {
       const lens = addBotMesh(
@@ -1833,15 +1871,15 @@ export class GameEngine {
           transparent: true,
           opacity: 0.8,
         }),
-        [side * 0.071, 1.755, -0.216],
+        [side * 0.071, 1.755, 0.216],
       );
-      lens.rotation.y = Math.PI;
+      lens.rotation.y = 0;
     }
 
     addBotMesh(
       new RoundedBoxGeometry(0.22, 0.095, 0.025, 2, 0.01),
       accent,
-      [0, 1.29, -0.255],
+      [0, 1.29, 0.255],
     );
     for (const shoulder of [-1, 1]) {
       addBotMesh(
@@ -1884,13 +1922,13 @@ export class GameEngine {
           new RoundedBoxGeometry(0.19, 0.17, 0.11, 2, 0.035),
           armor,
         );
-        knee.position.set(0, -0.43, -0.07);
+        knee.position.set(0, -0.43, 0.07);
         limb.add(knee);
         const boot = new THREE.Mesh(
           new RoundedBoxGeometry(0.2, 0.15, 0.31, 3, 0.05),
           rubber,
         );
-        boot.position.set(0, -0.88, -0.07);
+        boot.position.set(0, -0.88, 0.07);
         limb.add(boot);
       } else {
         const glove = new THREE.Mesh(
@@ -1911,29 +1949,29 @@ export class GameEngine {
     addBotMesh(
       new RoundedBoxGeometry(0.115, 0.115, 0.82, 3, 0.018),
       weapon,
-      [0.2, 1.2, -0.42],
+      [0.2, 1.2, 0.42],
       [-0.08, -0.04, 0],
     );
     addBotMesh(
       new THREE.CylinderGeometry(0.025, 0.03, 0.43, 9),
       weapon,
-      [0.2, 1.235, -1.02],
+      [0.2, 1.235, 1.02],
       [Math.PI / 2, 0, 0],
     );
     addBotMesh(
       new RoundedBoxGeometry(0.1, 0.22, 0.16, 2, 0.02),
       rubber,
-      [0.2, 1.02, -0.42],
+      [0.2, 1.02, 0.42],
       [-0.16, 0, 0],
     );
     addBotMesh(
       new RoundedBoxGeometry(0.14, 0.14, 0.26, 3, 0.02),
       rubber,
-      [0.2, 1.21, 0.05],
+      [0.2, 1.21, -0.05],
     );
     const muzzle = new THREE.Object3D();
     muzzle.name = "muzzle";
-    muzzle.position.set(0.2, 1.235, -1.26);
+    muzzle.position.set(0.2, 1.235, 1.26);
     group.add(muzzle);
     group.scale.setScalar(1.04);
     this.scene.add(group);
@@ -2003,25 +2041,50 @@ export class GameEngine {
 
       if (shouldMove) {
         const speed = bot.speed * (hasCombatTarget ? 0.72 : 1);
+        const previousX = bot.group.position.x;
+        const previousZ = bot.group.position.z;
         const nextX = clamp(bot.group.position.x + moveX * speed * dt, -150, 150);
         const nextZ = clamp(bot.group.position.z + moveZ * speed * dt, -150, 150);
         if (!this.botCollides(nextX, bot.group.position.z)) bot.group.position.x = nextX;
         else bot.strafe *= -1;
         if (!this.botCollides(bot.group.position.x, nextZ)) bot.group.position.z = nextZ;
         else bot.strafe *= -1;
+        const actualMoveX = bot.group.position.x - previousX;
+        const actualMoveZ = bot.group.position.z - previousZ;
+        const actualDistance = Math.hypot(actualMoveX, actualMoveZ);
         bot.stride += dt * speed * 2.7;
-        bot.leftLeg.rotation.x = Math.sin(bot.stride) * 0.58;
-        bot.rightLeg.rotation.x = Math.sin(bot.stride + Math.PI) * 0.58;
+        bot.leftLeg.rotation.x = -Math.sin(bot.stride) * 0.58;
+        bot.rightLeg.rotation.x = Math.sin(bot.stride) * 0.58;
         bot.leftArm.rotation.x = Math.sin(bot.stride + Math.PI) * 0.22 - 0.72;
         bot.rightArm.rotation.x = Math.sin(bot.stride) * 0.22 - 0.72;
+        if (actualDistance > 0.0001) {
+          const movementYaw = Math.atan2(actualMoveX, actualMoveZ);
+          bot.group.rotation.y = dampAngle(
+            bot.group.rotation.y,
+            movementYaw,
+            13,
+            dt,
+          );
+        }
       } else {
         bot.leftLeg.rotation.x = damp(bot.leftLeg.rotation.x, 0, 8, dt);
         bot.rightLeg.rotation.x = damp(bot.rightLeg.rotation.x, 0, 8, dt);
         bot.leftArm.rotation.x = damp(bot.leftArm.rotation.x, -0.72, 8, dt);
         bot.rightArm.rotation.x = damp(bot.rightArm.rotation.x, -0.72, 8, dt);
       }
-      bot.group.position.y = terrainHeight(bot.group.position.x, bot.group.position.z);
-      bot.group.rotation.y = Math.atan2(direction.x, direction.z) + Math.PI;
+      const gaitBob = shouldMove
+        ? Math.abs(Math.sin(bot.stride * 2)) * 0.035
+        : 0;
+      bot.group.position.y =
+        terrainHeight(bot.group.position.x, bot.group.position.z) + gaitBob;
+      if (!shouldMove) {
+        bot.group.rotation.y = dampAngle(
+          bot.group.rotation.y,
+          Math.atan2(direction.x, direction.z),
+          10,
+          dt,
+        );
+      }
 
       if (hasCombatTarget && targetDistance < 58 && bot.fireCooldown <= 0) {
         bot.fireCooldown = 0.28 + this.random() * 0.42;

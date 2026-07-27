@@ -522,7 +522,9 @@ export default function GameClient() {
             <span>
               <b>SPACE</b> JUMP
             </span>
-            <span className="build-label">FIELD BUILD 1.1.1 · MOVEMENT HOTFIX</span>
+            <span className="build-label">
+              FIELD BUILD 1.2.0 · MARKET WARFARE
+            </span>
           </footer>
         </section>
       )}

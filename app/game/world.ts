@@ -80,6 +80,13 @@ function axisPoint(distance: number, sideOffset = 0): [number, number] {
   ];
 }
 
+function streetFacingRotation(sideOffset: number): number {
+  return (
+    MAIN_ROAD_ROTATION +
+    (sideOffset > 0 ? -Math.PI / 2 : Math.PI / 2)
+  );
+}
+
 function registerMesh(
   scene: THREE.Scene,
   colliders: Collider[],
@@ -174,12 +181,12 @@ function createSky(scene: THREE.Scene): void {
       depthWrite: false,
       fog: false,
       uniforms: {
-        zenith: { value: new THREE.Color(0x17324f) },
-        upper: { value: new THREE.Color(0x42647a) },
-        horizon: { value: new THREE.Color(0xd5a675) },
-        haze: { value: new THREE.Color(0xb58c68) },
+        zenith: { value: new THREE.Color(0x102b45) },
+        upper: { value: new THREE.Color(0x456c80) },
+        horizon: { value: new THREE.Color(0xe0ad78) },
+        haze: { value: new THREE.Color(0xa67d61) },
         sunDirection: {
-          value: new THREE.Vector3(-0.48, 0.46, -0.75).normalize(),
+          value: new THREE.Vector3(-0.69, 0.31, -0.65).normalize(),
         },
       },
       vertexShader: `
@@ -225,16 +232,16 @@ function createSky(scene: THREE.Scene): void {
           float sunDot = max(dot(direction, sunDirection), 0.0);
           float sun = pow(sunDot, 1150.0);
           float glow = pow(sunDot, 8.0);
-          color += vec3(1.0, 0.57, 0.24) * glow * 0.52;
+          color += vec3(1.0, 0.55, 0.21) * glow * 0.62;
           color += vec3(1.0, 0.91, 0.7) * sun * 7.0;
 
           vec2 cloudUv = direction.xz / max(0.12, direction.y + 0.34);
           float cloud = noise(cloudUv * 2.1) * 0.62 + noise(cloudUv * 5.3) * 0.38;
           cloud = smoothstep(0.58, 0.75, cloud) * smoothstep(0.07, 0.34, height);
-          color = mix(color, vec3(0.83, 0.78, 0.7), cloud * 0.27);
+          color = mix(color, vec3(0.82, 0.77, 0.69), cloud * 0.31);
 
           float horizonDust = exp(-abs(height) * 15.0);
-          color = mix(color, vec3(0.61, 0.48, 0.38), horizonDust * 0.34);
+          color = mix(color, vec3(0.61, 0.46, 0.35), horizonDust * 0.27);
           gl_FragColor = vec4(color, 1.0);
         }
       `,
@@ -545,6 +552,78 @@ function addBuilding(
       surface: "concrete",
       bevel: 0.05,
     },
+  );
+
+  // Deep contact bands and drain hardware stop the procedural blocks from
+  // appearing to float above the street.
+  for (const front of [-1, 1]) {
+    const [bandX, bandZ] = localToWorld(
+      options.x,
+      options.z,
+      rotation,
+      0,
+      front * (options.depth / 2 + 0.085),
+    );
+    addBox(
+      scene,
+      colliders,
+      staticMeshes,
+      materials.concreteDark,
+      new THREE.Vector3(bandX, ground + 0.26, bandZ),
+      new THREE.Vector3(options.width + 0.12, 0.52, 0.14),
+      {
+        rotation,
+        collider: false,
+        shadows: false,
+        bevel: 0.025,
+      },
+    );
+  }
+  for (const sideSign of [-1, 1]) {
+    const [bandX, bandZ] = localToWorld(
+      options.x,
+      options.z,
+      rotation,
+      sideSign * (options.width / 2 + 0.085),
+      0,
+    );
+    addBox(
+      scene,
+      colliders,
+      staticMeshes,
+      materials.concreteDark,
+      new THREE.Vector3(bandX, ground + 0.26, bandZ),
+      new THREE.Vector3(0.14, 0.52, options.depth),
+      {
+        rotation,
+        collider: false,
+        shadows: false,
+        bevel: 0.025,
+      },
+    );
+  }
+  const drainSide =
+    seeded(Math.abs(Math.round(options.x * 37 + options.z * 61)))() > 0.5
+      ? 1
+      : -1;
+  const [drainX, drainZ] = localToWorld(
+    options.x,
+    options.z,
+    rotation,
+    drainSide * (options.width / 2 - 0.42),
+    options.depth / 2 + 0.18,
+  );
+  addCylinder(
+    scene,
+    colliders,
+    staticMeshes,
+    materials.metalDark,
+    new THREE.Vector3(drainX, ground + options.height * 0.48, drainZ),
+    0.065,
+    0.075,
+    Math.max(2.8, options.height * 0.9),
+    7,
+    { collider: false, surface: "metal", shadows: false },
   );
 
   for (const sideSign of [-1, 1]) {
@@ -1285,12 +1364,19 @@ function addMarketStalls(
   materials: BattlefieldMaterials,
 ): void {
   const stalls = [
-    [-19, 8, 0.06, 0x735745],
-    [-12, 13, -0.16, 0x435b55],
-    [11, -10, 0.14, 0x7b643e],
-    [18, -5, -0.1, 0x52606d],
+    [-61, 11.8, 0.07, 0x735745],
+    [-52, 11.9, -0.08, 0x435b55],
+    [-36, -11.9, 0.06, 0x7b643e],
+    [-27, -12.1, -0.05, 0x52606d],
+    [25, 11.8, 0.06, 0x7a4d3c],
+    [43, -11.8, -0.07, 0x3f5e5c],
+    [52, -11.9, 0.05, 0x806641],
+    [70, 11.9, -0.06, 0x565c72],
   ] as const;
-  stalls.forEach(([x, z, rotation, color], stallIndex) => {
+  stalls.forEach(([distance, sideOffset, rotationOffset, color], stallIndex) => {
+    const [x, z] = axisPoint(distance, sideOffset);
+    const rotation =
+      streetFacingRotation(sideOffset) + rotationOffset;
     const ground = terrainHeight(x, z);
     const canopyMaterial = materials.fabric.clone();
     canopyMaterial.color.setHex(color);
@@ -1379,6 +1465,306 @@ function addMarketStalls(
       );
     }
   });
+}
+
+function addUrbanInfill(
+  scene: THREE.Scene,
+  colliders: Collider[],
+  staticMeshes: THREE.Object3D[],
+  materials: BattlefieldMaterials,
+): void {
+  const streetRow = [
+    [-138, 23, 15, 11, 8.4, 2, materials.plasterWarm, materials.concreteDark],
+    [-103, 23, 14, 12, 11.6, 3, materials.brick, materials.rustedMetal],
+    [-49, 23, 14, 11, 9.1, 2, materials.plaster, materials.concreteDark],
+    [59, 23, 14, 12, 13.2, 3, materials.concrete, materials.rustedMetal],
+    [147, 24, 14, 11, 8.8, 2, materials.plasterWarm, materials.concreteDark],
+    [-139, -23, 15, 12, 10.7, 3, materials.brick, materials.concreteDark],
+    [-79, -24, 14, 11, 8.7, 2, materials.plaster, materials.rustedMetal],
+    [-20, -24, 15, 12, 12.8, 3, materials.concrete, materials.concreteDark],
+    [42, -24, 15, 11, 9.4, 2, materials.plasterWarm, materials.rustedMetal],
+    [88, -24, 13, 11, 12.2, 3, materials.brick, materials.concreteDark],
+    [143, -24, 14, 12, 10.1, 2, materials.plaster, materials.rustedMetal],
+  ] as const;
+  streetRow.forEach(
+    ([distance, sideOffset, width, depth, height, floors, wall, accent], index) => {
+      const [x, z] = axisPoint(distance, sideOffset);
+      addBuilding(scene, colliders, staticMeshes, materials, {
+        x,
+        z,
+        width,
+        depth,
+        height,
+        floors,
+        rotation: streetFacingRotation(sideOffset),
+        wall,
+        accent,
+        awning: index % 3 === 0 ? width * 0.5 : undefined,
+        balcony: floors > 2 && index % 2 === 1,
+        damaged: index === 1 || index === 8,
+      });
+    },
+  );
+
+  const backRow = [
+    [-122, 40, 18, 13, 14.4, 4, materials.concrete],
+    [-87, -41, 19, 13, 12.6, 3, materials.plasterWarm],
+    [-60, 41, 17, 12, 15.5, 4, materials.brick],
+    [-31, -41, 18, 13, 11.4, 3, materials.concrete],
+    [22, 41, 19, 14, 14.7, 4, materials.plaster],
+    [55, -41, 18, 12, 12.1, 3, materials.brick],
+    [116, 42, 20, 14, 16.2, 4, materials.concrete],
+    [137, -41, 17, 12, 13.8, 3, materials.plasterWarm],
+  ] as const;
+  backRow.forEach(
+    ([distance, sideOffset, width, depth, height, floors, wall], index) => {
+      const [x, z] = axisPoint(distance, sideOffset);
+      addBuilding(scene, colliders, staticMeshes, materials, {
+        x,
+        z,
+        width,
+        depth,
+        height,
+        floors,
+        rotation: streetFacingRotation(sideOffset),
+        wall,
+        accent: index % 2 ? materials.concreteDark : materials.rustedMetal,
+        balcony: index % 3 !== 1,
+        damaged: index === 2 || index === 6,
+      });
+    },
+  );
+}
+
+function addPalm(
+  scene: THREE.Scene,
+  colliders: Collider[],
+  staticMeshes: THREE.Object3D[],
+  materials: BattlefieldMaterials,
+  distance: number,
+  sideOffset: number,
+  scale: number,
+): void {
+  const [x, z] = axisPoint(distance, sideOffset);
+  const ground = terrainHeight(x, z);
+  const height = 6.2 * scale;
+  addCylinder(
+    scene,
+    colliders,
+    staticMeshes,
+    materials.wood,
+    new THREE.Vector3(x, ground + height / 2, z),
+    0.13 * scale,
+    0.25 * scale,
+    height,
+    9,
+    { collider: false, surface: "wood" },
+  );
+  const crown = new THREE.Vector3(x, ground + height, z);
+  for (let frond = 0; frond < 10; frond += 1) {
+    const length = (2.6 + (frond % 3) * 0.32) * scale;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(
+        [
+          0,
+          0,
+          0,
+          -0.34 * scale,
+          -0.12 * scale,
+          length * 0.5,
+          0,
+          -0.55 * scale,
+          length,
+          0.34 * scale,
+          -0.12 * scale,
+          length * 0.5,
+        ],
+        3,
+      ),
+    );
+    geometry.setIndex([0, 1, 2, 0, 2, 3]);
+    geometry.computeVertexNormals();
+    const leaf = new THREE.Mesh(geometry, materials.foliage);
+    leaf.position.copy(crown);
+    leaf.rotation.y = (frond / 10) * Math.PI * 2 + distance * 0.013;
+    leaf.rotation.x = -0.06 - (frond % 2) * 0.08;
+    registerMesh(scene, colliders, staticMeshes, leaf, {
+      collider: false,
+      shadows: frond % 2 === 0,
+    });
+  }
+}
+
+function addStreetDressing(
+  scene: THREE.Scene,
+  colliders: Collider[],
+  staticMeshes: THREE.Object3D[],
+  materials: BattlefieldMaterials,
+): void {
+  const random = seeded(0x1a0c2026);
+  const paperMaterial = new THREE.MeshStandardMaterial({
+    color: 0xc9b99a,
+    roughness: 1,
+    metalness: 0,
+    side: THREE.DoubleSide,
+    vertexColors: true,
+  });
+  const paperGeometry = new THREE.PlaneGeometry(0.42, 0.28);
+  paperGeometry.rotateX(-Math.PI / 2);
+  const litter = new THREE.InstancedMesh(paperGeometry, paperMaterial, 220);
+  const dummy = new THREE.Object3D();
+  const paperColor = new THREE.Color();
+  const paperPalette = [0xc9b99a, 0x8f826e, 0x5e6c69, 0x7a5946];
+  for (let index = 0; index < 220; index += 1) {
+    const distance = -148 + random() * 296;
+    const sideOffset =
+      (random() > 0.5 ? 1 : -1) * (8.7 + random() * 11.5);
+    const [x, z] = axisPoint(distance, sideOffset);
+    dummy.position.set(x, terrainHeight(x, z) + 0.135, z);
+    dummy.rotation.set(0, random() * Math.PI * 2, 0);
+    dummy.scale.set(0.55 + random() * 1.35, 0.55 + random() * 1.2, 1);
+    dummy.updateMatrix();
+    litter.setMatrixAt(index, dummy.matrix);
+    paperColor
+      .setHex(paperPalette[index % paperPalette.length])
+      .multiplyScalar(0.78 + random() * 0.24);
+    litter.setColorAt(index, paperColor);
+  }
+  litter.instanceMatrix.needsUpdate = true;
+  if (litter.instanceColor) litter.instanceColor.needsUpdate = true;
+  litter.receiveShadow = true;
+  scene.add(litter);
+  staticMeshes.push(litter);
+
+  const barrelClusters = [
+    [-119, 13],
+    [-92, -16],
+    [-63, 16],
+    [-42, -14],
+    [31, -16],
+    [58, 15],
+    [84, -15],
+    [126, 14],
+  ] as const;
+  barrelClusters.forEach(([distance, sideOffset]) => {
+    for (let barrel = 0; barrel < 3; barrel += 1) {
+      const [x, z] = axisPoint(
+        distance + (barrel - 1) * 0.72,
+        sideOffset + (barrel % 2) * 0.62,
+      );
+      addCylinder(
+        scene,
+        colliders,
+        staticMeshes,
+        barrel % 2 ? materials.metal : materials.rustedMetal,
+        new THREE.Vector3(x, terrainHeight(x, z) + 0.56, z),
+        0.34,
+        0.37,
+        1.12,
+        14,
+        { collider: false, surface: "metal" },
+      );
+    }
+  });
+
+  const tyreSpots = [
+    [-108, -13],
+    [-72, 14],
+    [-15, 14],
+    [39, 14],
+    [75, -14],
+    [132, -13],
+  ] as const;
+  tyreSpots.forEach(([distance, sideOffset], stackIndex) => {
+    const [x, z] = axisPoint(distance, sideOffset);
+    for (let tyre = 0; tyre < 2 + (stackIndex % 2); tyre += 1) {
+      const mesh = new THREE.Mesh(
+        new THREE.TorusGeometry(0.43, 0.13, 7, 14),
+        materials.rubber,
+      );
+      mesh.position.set(
+        x,
+        terrainHeight(x, z) + 0.14 + tyre * 0.22,
+        z,
+      );
+      mesh.rotation.set(Math.PI / 2, 0, stackIndex * 0.37);
+      registerMesh(scene, colliders, staticMeshes, mesh, {
+        collider: false,
+        surface: "metal",
+      });
+    }
+  });
+
+  const clothMaterials = [0x8a4d3d, 0xb39562, 0x45656a, 0x6e5b72].map(
+    (color) => {
+      const material = materials.fabric.clone();
+      material.color.setHex(color);
+      material.side = THREE.DoubleSide;
+      return material;
+    },
+  );
+  const overheadSpans = [-67, -39, -11, 27, 57, 83] as const;
+  overheadSpans.forEach((distance, spanIndex) => {
+    const endA = axisPoint(distance, -19);
+    const endB = axisPoint(distance, 19);
+    const cableHeight = 7.4 + (spanIndex % 3) * 0.7;
+    const from = new THREE.Vector3(
+      endA[0],
+      terrainHeight(endA[0], endA[1]) + cableHeight,
+      endA[1],
+    );
+    const to = new THREE.Vector3(
+      endB[0],
+      terrainHeight(endB[0], endB[1]) + cableHeight,
+      endB[1],
+    );
+    addPowerCable(scene, staticMeshes, materials.rubber, from, to, 1.35);
+    for (let cloth = 0; cloth < 5; cloth += 1) {
+      const sideOffset = -11.5 + cloth * 5.7;
+      const [x, z] = axisPoint(distance, sideOffset);
+      const centerDrop = 1 - Math.abs(sideOffset) / 19;
+      addBox(
+        scene,
+        colliders,
+        staticMeshes,
+        clothMaterials[(cloth + spanIndex) % clothMaterials.length],
+        new THREE.Vector3(
+          x,
+          terrainHeight(x, z) + cableHeight - 0.65 - centerDrop * 1.25,
+          z,
+        ),
+        new THREE.Vector3(2.4 + (cloth % 2) * 0.6, 1.25, 0.035),
+        {
+          rotation: MAIN_ROAD_ROTATION,
+          collider: false,
+          shadows: true,
+        },
+      );
+    }
+  });
+
+  [
+    [-128, 31, 1],
+    [-95, -31, 0.9],
+    [-54, 32, 1.08],
+    [-17, -32, 0.95],
+    [36, 32, 1.1],
+    [73, -32, 0.92],
+    [110, 32, 1.04],
+    [139, -31, 0.88],
+  ].forEach(([distance, sideOffset, scale]) =>
+    addPalm(
+      scene,
+      colliders,
+      staticMeshes,
+      materials,
+      distance,
+      sideOffset,
+      scale,
+    ),
+  );
 }
 
 function addDebrisField(
@@ -1727,7 +2113,7 @@ export function buildWorld(
       depth: 13,
       height: 11.5,
       floors: 3,
-      rotation: MAIN_ROAD_ROTATION,
+      rotation: streetFacingRotation(23),
       wall: materials.plasterWarm,
       accent: materials.concreteDark,
       sign: "AL QAMAR",
@@ -1741,7 +2127,7 @@ export function buildWorld(
       depth: 15,
       height: 14.2,
       floors: 4,
-      rotation: MAIN_ROAD_ROTATION + Math.PI,
+      rotation: streetFacingRotation(-24),
       wall: materials.brick,
       accent: materials.rustedMetal,
       sign: "MERIDIAN",
@@ -1755,20 +2141,20 @@ export function buildWorld(
       depth: 14,
       height: 9.2,
       floors: 2,
-      rotation: MAIN_ROAD_ROTATION,
+      rotation: streetFacingRotation(25),
       wall: materials.plaster,
       accent: materials.concreteDark,
       sign: "KHARIF CAFE",
       awning: 9,
     },
     {
-      x: axisPoint(7, -25)[0],
-      z: axisPoint(7, -25)[1],
+      x: axisPoint(18, -25)[0],
+      z: axisPoint(18, -25)[1],
       width: 22,
       depth: 16,
       height: 16,
       floors: 4,
-      rotation: MAIN_ROAD_ROTATION + Math.PI,
+      rotation: streetFacingRotation(-25),
       wall: materials.concrete,
       accent: materials.rustedMetal,
       sign: "CIVIC EXCHANGE",
@@ -1782,7 +2168,7 @@ export function buildWorld(
       depth: 14,
       height: 12.5,
       floors: 3,
-      rotation: MAIN_ROAD_ROTATION,
+      rotation: streetFacingRotation(24),
       wall: materials.brick,
       accent: materials.concreteDark,
       sign: "SOUK 17",
@@ -1795,7 +2181,7 @@ export function buildWorld(
       depth: 15,
       height: 10.5,
       floors: 2,
-      rotation: MAIN_ROAD_ROTATION + Math.PI,
+      rotation: streetFacingRotation(-25),
       wall: materials.plasterWarm,
       accent: materials.rustedMetal,
       sign: "FUEL & SUPPLY",
@@ -1808,7 +2194,7 @@ export function buildWorld(
       depth: 14,
       height: 14.8,
       floors: 4,
-      rotation: MAIN_ROAD_ROTATION,
+      rotation: streetFacingRotation(25),
       wall: materials.concrete,
       accent: materials.metalDark,
       balcony: true,
@@ -1820,7 +2206,7 @@ export function buildWorld(
       depth: 13,
       height: 9,
       floors: 2,
-      rotation: MAIN_ROAD_ROTATION + Math.PI,
+      rotation: streetFacingRotation(-24),
       wall: materials.brick,
       accent: materials.rustedMetal,
       sign: "DEPOT 3",
@@ -1836,6 +2222,7 @@ export function buildWorld(
       building,
     ),
   );
+  addUrbanInfill(scene, colliders, staticMeshes, materials);
 
   const [warehouseX, warehouseZ] = axisPoint(-112, -24);
   addOpenWarehouse(
@@ -1845,7 +2232,7 @@ export function buildWorld(
     materials,
     warehouseX,
     warehouseZ,
-    MAIN_ROAD_ROTATION + Math.PI,
+    streetFacingRotation(-24),
   );
   const [warehouseTwoX, warehouseTwoZ] = axisPoint(132, 28);
   addOpenWarehouse(
@@ -1855,7 +2242,7 @@ export function buildWorld(
     materials,
     warehouseTwoX,
     warehouseTwoZ,
-    MAIN_ROAD_ROTATION,
+    streetFacingRotation(28),
   );
 
   const [towerX, towerZ] = axisPoint(0, 2);
@@ -1888,6 +2275,7 @@ export function buildWorld(
   );
 
   addMarketStalls(scene, colliders, staticMeshes, materials);
+  addStreetDressing(scene, colliders, staticMeshes, materials);
 
   const barrierPositions: Array<[number, number, number]> = [
     [-128, 0, MAIN_ROAD_ROTATION + 0.18],

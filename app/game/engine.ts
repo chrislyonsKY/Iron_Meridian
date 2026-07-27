@@ -6,7 +6,11 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { BattlefieldAudio } from "./audio";
+import {
+  BattlefieldAudio,
+  type ImpactSurface,
+  type WeaponSoundProfile,
+} from "./audio";
 import {
   CLASS_DEFINITIONS,
   type GameCallbacks,
@@ -54,8 +58,10 @@ interface Bot {
 
 interface Vehicle {
   group: THREE.Group;
+  body: THREE.Group;
   turret: THREE.Group;
-  wheels: THREE.Mesh[];
+  wheels: THREE.Group[];
+  steeringPivots: THREE.Group[];
   health: number;
   maxHealth: number;
   speed: number;
@@ -262,7 +268,10 @@ export class GameEngine {
   private cameraImpulse = 0;
   private bobTime = 0;
   private stepDistance = 0;
+  private adsBlend = 0;
+  private scopeMode: "combat" | "marksman" | "reflex" = "combat";
   private inVehicle = false;
+  private vehicleDustClock = 0;
 
   private bots: Bot[] = [];
   private vehicle: Vehicle;
@@ -471,6 +480,7 @@ export class GameEngine {
     this.inVehicle = false;
     this.vehicle.occupied = false;
     this.weaponRig.visible = true;
+    this.clearCombatOverlays();
 
     const spawn = this.getForwardSpawn();
     this.playerPosition.copy(spawn);
@@ -648,7 +658,7 @@ export class GameEngine {
       ) {
         this.phase = "paused";
         this.fireHeld = false;
-        this.adsHeld = false;
+        this.clearCombatOverlays();
         this.callbacks.onPhase("paused");
       }
     };
@@ -852,6 +862,8 @@ export class GameEngine {
         const loaded = Math.min(needed, this.reserve);
         this.ammo += loaded;
         this.reserve -= loaded;
+        this.audio.weaponAction("magin");
+        window.setTimeout(() => this.audio.weaponAction("charge"), 105);
         this.callbacks.onNotice("RELOADED", `${this.ammo} rounds ready`);
       }
     }
@@ -874,6 +886,12 @@ export class GameEngine {
 
     this.updateWeapon(dt);
     this.updateBots(dt);
+    const engagedBots = this.bots.reduce(
+      (count, bot) => count + (bot.alive && bot.target ? 1 : 0),
+      0,
+    );
+    this.audio.updateBattlefield(dt, 0.34 + engagedBots * 0.045);
+    if (!this.inVehicle) this.audio.setVehicleEngine(false);
     this.updateGrenades(dt);
     this.updateParticles(dt);
     this.updateObjectives(dt);
@@ -914,6 +932,7 @@ export class GameEngine {
   }
 
   private updateMenuCamera(dt: number): void {
+    this.clearCombatOverlays();
     this.menuOrbit += dt * 0.075;
     const radius = 104;
     this.camera.position.set(
@@ -923,6 +942,20 @@ export class GameEngine {
     );
     this.camera.lookAt(0, 4, 0);
     this.weaponRig.visible = false;
+  }
+
+  private clearCombatOverlays(): void {
+    this.adsHeld = false;
+    this.adsBlend = 0;
+    const scopeOverlay = document.getElementById("scope-overlay");
+    scopeOverlay?.classList.remove("is-visible");
+    if (scopeOverlay) {
+      scopeOverlay.style.opacity = "0";
+      scopeOverlay.style.setProperty("--ads-progress", "0");
+    }
+    const battleHud = document.querySelector<HTMLElement>(".battle-hud");
+    battleHud?.classList.remove("is-ads", "is-vehicle");
+    this.audio.setVehicleEngine(false);
   }
 
   private updatePlayer(dt: number): void {
@@ -1015,7 +1048,13 @@ export class GameEngine {
         this.cameraImpulse * 0.003,
     );
 
-    const targetFov = this.adsHeld ? 57 : sprinting ? 83 : 76;
+    const aimedFov =
+      this.scopeMode === "marksman"
+        ? 38
+        : this.scopeMode === "combat"
+          ? 48
+          : 58;
+    const targetFov = this.adsHeld ? aimedFov : sprinting ? 83 : 76;
     this.camera.fov = damp(this.camera.fov, targetFov, 10, dt);
     this.camera.updateProjectionMatrix();
   }
@@ -1059,6 +1098,7 @@ export class GameEngine {
     const marksman = weapon.shortName === "S-14";
     const support = this.currentClass.id === "medic";
     const compact = this.currentClass.id === "engineer";
+    this.scopeMode = marksman ? "marksman" : compact ? "reflex" : "combat";
     const receiverLength = marksman ? 0.76 : support ? 0.71 : compact ? 0.5 : 0.62;
     const handguardLength = marksman ? 0.66 : support ? 0.61 : compact ? 0.39 : 0.54;
     const barrelLength = marksman ? 0.72 : support ? 0.58 : compact ? 0.34 : 0.48;
@@ -1143,14 +1183,24 @@ export class GameEngine {
       roughness: 0.97,
       metalness: 0,
     });
-    const glass = new THREE.MeshPhysicalMaterial({
-      color: 0x7ad2e2,
-      roughness: 0.06,
-      transmission: 0.22,
+    // A transmissive material in the isolated first-person scene was resolving
+    // against its black clear colour, creating the moving black disc reported
+    // around the reticle. The glass is now a thin additive coating; the actual
+    // sight picture comes from the ADS overlay and the world remains visible.
+    const glass = new THREE.MeshBasicMaterial({
+      color: 0x69c4ce,
       transparent: true,
-      opacity: 0.7,
-      emissive: 0x143d46,
-      emissiveIntensity: 0.5,
+      opacity: 0.16,
+      depthWrite: false,
+      toneMapped: false,
+      side: THREE.DoubleSide,
+    });
+    const lensEdge = new THREE.MeshBasicMaterial({
+      color: 0x9ee6d7,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+      toneMapped: false,
       side: THREE.DoubleSide,
     });
     const marking = new THREE.MeshBasicMaterial({
@@ -1192,6 +1242,49 @@ export class GameEngine {
       ),
       dark,
       [0, 0.115, -0.235],
+    );
+    // Functional receiver details. These small, material-separated shapes are
+    // the cues that distinguish a machined weapon from stacked grey boxes.
+    addPart(
+      new RoundedBoxGeometry(0.012, 0.078, receiverLength * 0.34, 2, 0.004),
+      dark,
+      [0.096, 0.058, -0.29],
+      [0, 0, 0],
+      "ejection-port",
+    );
+    addPart(
+      new RoundedBoxGeometry(0.008, 0.046, receiverLength * 0.2, 2, 0.003),
+      exposedMetal,
+      [0.103, 0.058, -0.285],
+      [0, 0, 0],
+      "bolt-carrier",
+    );
+    addPart(
+      new THREE.CylinderGeometry(0.018, 0.021, 0.032, 12),
+      dark,
+      [0.105, 0.098, -0.065],
+      [0, 0, Math.PI / 2],
+      "forward-assist",
+    );
+    addPart(
+      new RoundedBoxGeometry(0.15, 0.018, 0.065, 2, 0.005),
+      exposedMetal,
+      [0, 0.196, 0.02],
+      [0.08, 0, 0],
+      "charging-handle",
+    );
+    addPart(
+      new THREE.CylinderGeometry(0.014, 0.014, 0.015, 12),
+      exposedMetal,
+      [-0.099, 0.006, -0.045],
+      [0, 0, Math.PI / 2],
+      "selector",
+    );
+    addPart(
+      new THREE.BoxGeometry(0.008, 0.04, 0.012),
+      marking,
+      [-0.108, 0.028, -0.06],
+      [0, 0, -0.38],
     );
     addPart(
       new RoundedBoxGeometry(
@@ -1244,6 +1337,27 @@ export class GameEngine {
         );
       }
     }
+    for (let index = 0; index < 4; index += 1) {
+      addPart(
+        new RoundedBoxGeometry(0.06, 0.012, 0.065, 2, 0.006),
+        dark,
+        [
+          0,
+          -0.082,
+          handguardCenter -
+            handguardLength * 0.31 +
+            index * (handguardLength * 0.17),
+        ],
+      );
+    }
+    for (const side of [-1, 1]) {
+      addPart(
+        new THREE.CylinderGeometry(0.012, 0.012, 0.012, 10),
+        exposedMetal,
+        [side * 0.084, 0.075, handguardCenter + handguardLength * 0.34],
+        [0, 0, Math.PI / 2],
+      );
+    }
 
     const barrelCenter =
       handguardCenter - handguardLength / 2 - barrelLength / 2 + 0.02;
@@ -1259,6 +1373,20 @@ export class GameEngine {
       [0, 0.018, barrelCenter - barrelLength / 2 + 0.045],
       [Math.PI / 2, 0, 0],
     );
+    addPart(
+      new RoundedBoxGeometry(0.082, 0.072, 0.085, 3, 0.012),
+      exposedMetal,
+      [0, 0.028, handguardCenter - handguardLength * 0.34],
+      [0, 0, 0],
+      "gas-block",
+    );
+    addPart(
+      new THREE.CylinderGeometry(0.008, 0.008, handguardLength * 0.72, 8),
+      exposedMetal,
+      [0, 0.128, handguardCenter + handguardLength * 0.05],
+      [Math.PI / 2, 0, 0],
+      "gas-tube",
+    );
     const muzzleZ = barrelCenter - barrelLength / 2 - 0.055;
     addPart(
       new THREE.CylinderGeometry(0.04, 0.045, 0.13, 12),
@@ -1271,6 +1399,13 @@ export class GameEngine {
         new THREE.BoxGeometry(0.018, 0.026, 0.055),
         dark,
         [side * 0.04, 0.018, muzzleZ - 0.018],
+      );
+    }
+    for (const zOffset of [-0.038, 0.006, 0.048]) {
+      addPart(
+        new THREE.TorusGeometry(0.041, 0.004, 5, 14),
+        dark,
+        [0, 0.018, muzzleZ + zOffset],
       );
     }
 
@@ -1307,6 +1442,19 @@ export class GameEngine {
       [-0.13, 0, 0],
       "magazine",
     );
+    if (!support) {
+      for (let rib = -1; rib <= 1; rib += 1) {
+        const ribY = -0.24 + rib * 0.07;
+        const magazineRib = addPart(
+          new RoundedBoxGeometry(0.121, 0.012, 0.018, 2, 0.004),
+          dark,
+          [0, ribY, -0.372 + rib * 0.008],
+          [-0.13, 0, 0],
+          `magazine-detail-${rib}`,
+        );
+        magazineRib.userData.magazineBaseY = ribY;
+      }
+    }
     if (support) {
       addPart(
         new THREE.CylinderGeometry(0.16, 0.16, 0.19, 16),
@@ -1342,60 +1490,207 @@ export class GameEngine {
       [0, 0.02, 0.69],
       [0.03, 0, 0],
     );
+    addPart(
+      new RoundedBoxGeometry(0.116, 0.035, 0.22, 3, 0.01),
+      dark,
+      [0, 0.095, 0.42],
+      [0.015, 0, 0],
+    );
+    for (let detent = 0; detent < 4; detent += 1) {
+      addPart(
+        new THREE.BoxGeometry(0.018, 0.012, 0.025),
+        exposedMetal,
+        [0, -0.05, 0.31 + detent * 0.07],
+      );
+    }
 
-    if (marksman) {
+    if (compact) {
+      // Open holographic sight: separate frame members keep the glass readable
+      // instead of placing a dark box directly behind the reticle.
+      const sightY = 0.31;
       addPart(
-        new THREE.CylinderGeometry(0.068, 0.068, 0.42, 20),
+        new RoundedBoxGeometry(0.155, 0.045, 0.18, 3, 0.012),
         dark,
-        [0, 0.29, -0.23],
-        [Math.PI / 2, 0, 0],
+        [0, 0.245, -0.255],
       );
-      addPart(
-        new THREE.CylinderGeometry(0.082, 0.074, 0.055, 20),
-        dark,
-        [0, 0.29, -0.455],
-        [Math.PI / 2, 0, 0],
-      );
-      const scopeLens = addPart(
-        new THREE.CircleGeometry(0.061, 24),
-        glass,
-        [0, 0.29, -0.486],
-      );
-      scopeLens.rotation.y = Math.PI;
-      for (const z of [-0.12, -0.35]) {
+      for (const side of [-1, 1]) {
         addPart(
-          new THREE.TorusGeometry(0.072, 0.012, 8, 20),
+          new RoundedBoxGeometry(0.022, 0.155, 0.038, 3, 0.008),
+          dark,
+          [side * 0.073, sightY, -0.34],
+          [side * -0.08, 0, 0],
+        );
+      }
+      addPart(
+        new RoundedBoxGeometry(0.16, 0.026, 0.04, 3, 0.008),
+        dark,
+        [0, sightY + 0.077, -0.34],
+      );
+      addPart(
+        new THREE.PlaneGeometry(0.125, 0.125),
+        glass,
+        [0, sightY, -0.344],
+      );
+      addPart(
+        new THREE.CircleGeometry(0.006, 16),
+        new THREE.MeshBasicMaterial({
+          color: 0xff4932,
+          transparent: true,
+          opacity: 0.76,
+          depthWrite: false,
+          toneMapped: false,
+        }),
+        [0, sightY, -0.35],
+      );
+      for (const side of [-1, 1]) {
+        addPart(
+          new THREE.CylinderGeometry(0.012, 0.012, 0.018, 12),
           exposedMetal,
-          [0, 0.29, z],
-          [0, 0, 0],
+          [side * 0.061, 0.242, -0.26],
+          [0, 0, Math.PI / 2],
         );
       }
     } else {
+      // Physically proportioned LPVO / marksman glass. Every tube section is
+      // open-ended; closed CylinderGeometry caps were the other source of the
+      // black disc that appeared to follow the reticle.
+      const scopeY = marksman ? 0.305 : 0.292;
+      const scopeLength = marksman ? 0.52 : 0.34;
+      const tubeRadius = marksman ? 0.061 : 0.052;
+      const scopeCenterZ = marksman ? -0.22 : -0.19;
+      const rearZ = scopeCenterZ + scopeLength / 2;
+      const frontZ = scopeCenterZ - scopeLength / 2;
+      const objectiveRadius = tubeRadius * (marksman ? 1.32 : 1.2);
+      const ocularRadius = tubeRadius * 1.13;
+
       addPart(
-        new RoundedBoxGeometry(0.115, 0.105, 0.19, 3, 0.018),
+        new THREE.CylinderGeometry(
+          tubeRadius,
+          tubeRadius,
+          scopeLength,
+          36,
+          1,
+          true,
+        ),
         dark,
-        [0, 0.29, -0.26],
+        [0, scopeY, scopeCenterZ],
+        [Math.PI / 2, 0, 0],
       );
       addPart(
-        new RoundedBoxGeometry(0.16, 0.17, 0.055, 3, 0.015),
+        new THREE.CylinderGeometry(
+          objectiveRadius,
+          tubeRadius,
+          marksman ? 0.11 : 0.075,
+          36,
+          1,
+          true,
+        ),
         dark,
-        [0, 0.345, -0.35],
+        [0, scopeY, frontZ + (marksman ? 0.035 : 0.025)],
+        [Math.PI / 2, 0, 0],
       );
-      const lens = addPart(
-        new THREE.PlaneGeometry(0.102, 0.104),
+      addPart(
+        new THREE.CylinderGeometry(
+          tubeRadius,
+          ocularRadius,
+          marksman ? 0.09 : 0.065,
+          36,
+          1,
+          true,
+        ),
+        dark,
+        [0, scopeY, rearZ - (marksman ? 0.025 : 0.018)],
+        [Math.PI / 2, 0, 0],
+      );
+
+      for (const [z, radius] of [
+        [rearZ, ocularRadius],
+        [frontZ, objectiveRadius],
+      ] as const) {
+        addPart(
+          new THREE.TorusGeometry(radius, 0.009, 8, 36),
+          polymer,
+          [0, scopeY, z],
+        );
+        addPart(
+          new THREE.RingGeometry(radius * 0.84, radius * 0.9, 40),
+          lensEdge,
+          [0, scopeY, z + (z === rearZ ? 0.002 : -0.002)],
+          z === rearZ ? [0, 0, 0] : [0, Math.PI, 0],
+        );
+      }
+      addPart(
+        new THREE.CircleGeometry(ocularRadius * 0.82, 40),
         glass,
-        [0, 0.35, -0.381],
+        [0, scopeY, rearZ - 0.001],
       );
-      lens.rotation.y = Math.PI;
       addPart(
-        new THREE.CircleGeometry(0.007, 12),
-        new THREE.MeshBasicMaterial({
-          color: 0xff5239,
-          transparent: true,
-          opacity: 0.92,
-          depthWrite: false,
-        }),
-        [0, 0.35, -0.387],
+        new THREE.CircleGeometry(objectiveRadius * 0.82, 40),
+        glass,
+        [0, scopeY, frontZ + 0.001],
+        [0, Math.PI, 0],
+      );
+
+      // Elevation/windage drums with knurled cap bands.
+      addPart(
+        new THREE.CylinderGeometry(0.032, 0.035, 0.058, 18),
+        exposedMetal,
+        [0, scopeY + tubeRadius + 0.026, scopeCenterZ - 0.015],
+      );
+      addPart(
+        new THREE.TorusGeometry(0.034, 0.004, 5, 18),
+        dark,
+        [0, scopeY + tubeRadius + 0.056, scopeCenterZ - 0.015],
+        [Math.PI / 2, 0, 0],
+      );
+      addPart(
+        new THREE.CylinderGeometry(0.029, 0.032, 0.052, 18),
+        exposedMetal,
+        [tubeRadius + 0.027, scopeY, scopeCenterZ - 0.015],
+        [0, 0, Math.PI / 2],
+      );
+
+      // Two cantilever rings, narrow enough to keep the sight picture open.
+      for (const z of [scopeCenterZ + scopeLength * 0.22, scopeCenterZ - scopeLength * 0.2]) {
+        addPart(
+          new THREE.TorusGeometry(tubeRadius + 0.008, 0.011, 8, 32),
+          exposedMetal,
+          [0, scopeY, z],
+        );
+        addPart(
+          new RoundedBoxGeometry(0.085, scopeY - 0.208, 0.035, 3, 0.009),
+          exposedMetal,
+          [0, 0.208 + (scopeY - 0.208) / 2, z],
+        );
+        addPart(
+          new RoundedBoxGeometry(0.135, 0.024, 0.075, 3, 0.006),
+          dark,
+          [0, 0.223, z],
+        );
+      }
+
+      // Magnification throw lever and tethered objective cap hinge.
+      addPart(
+        new THREE.BoxGeometry(0.018, 0.058, 0.018),
+        polymer,
+        [-ocularRadius * 0.82, scopeY + 0.025, rearZ - 0.045],
+        [0, 0, -0.42],
+      );
+      addPart(
+        new THREE.CylinderGeometry(0.01, 0.01, 0.07, 10),
+        exposedMetal,
+        [objectiveRadius + 0.002, scopeY, frontZ + 0.012],
+        [0, 0, Math.PI / 2],
+      );
+    }
+
+    // Folded backup sights and cross-bolts fill the otherwise empty rail.
+    for (const z of [0.005, handguardCenter - handguardLength * 0.28]) {
+      addPart(
+        new RoundedBoxGeometry(0.09, 0.045, 0.035, 3, 0.008),
+        polymer,
+        [0, 0.25, z],
+        [0.12, 0, 0],
       );
     }
 
@@ -1561,6 +1856,27 @@ export class GameEngine {
   }
 
   private updateWeapon(dt: number): void {
+    const adsTarget =
+      this.phase === "playing" &&
+      this.weaponRig.visible &&
+      !this.inVehicle &&
+      this.adsHeld
+        ? 1
+        : 0;
+    this.adsBlend = damp(this.adsBlend, adsTarget, adsTarget ? 13 : 18, dt);
+    const scopeOverlay = document.getElementById("scope-overlay");
+    const battleHud = document.querySelector<HTMLElement>(".battle-hud");
+    const visibleScope = this.adsBlend > 0.035 && this.scopeMode !== "reflex";
+    if (scopeOverlay) {
+      scopeOverlay.dataset.optic = this.scopeMode;
+      scopeOverlay.classList.toggle("is-visible", visibleScope);
+      scopeOverlay.style.setProperty("--ads-progress", this.adsBlend.toFixed(3));
+      scopeOverlay.style.opacity = visibleScope
+        ? clamp((this.adsBlend - 0.28) / 0.6, 0, 1).toFixed(3)
+        : "0";
+    }
+    battleHud?.classList.toggle("is-ads", this.adsBlend > 0.34);
+    battleHud?.classList.toggle("is-vehicle", this.inVehicle);
     if (!this.weaponRig.visible) return;
     this.weaponKick = damp(this.weaponKick, 0, 18, dt);
     this.cameraImpulse = damp(this.cameraImpulse, 0, 15, dt);
@@ -1577,7 +1893,7 @@ export class GameEngine {
       this.muzzleBurst.rotation.z += dt * 31;
     }
     const moving = Math.hypot(this.playerVelocity.x, this.playerVelocity.z);
-    const ads = this.adsHeld ? 1 : 0;
+    const ads = this.adsBlend;
     const reloadProgress =
       this.reloadRemaining > 0
         ? 1 - this.reloadRemaining / this.currentClass.weapon.reloadTime
@@ -1586,13 +1902,25 @@ export class GameEngine {
       this.reloadRemaining > 0 ? Math.sin(reloadProgress * Math.PI) : 0;
     const swayX = Math.sin(this.bobTime) * 0.012 * Math.min(1, moving / 4);
     const swayY = Math.abs(Math.cos(this.bobTime)) * 0.009 * Math.min(1, moving / 4);
-    const targetX = THREE.MathUtils.lerp(0.39, 0, ads) + swayX;
+    const aimY =
+      this.scopeMode === "marksman"
+        ? -0.214
+        : this.scopeMode === "combat"
+          ? -0.204
+          : -0.218;
+    const aimZ =
+      this.scopeMode === "marksman"
+        ? -0.27
+        : this.scopeMode === "combat"
+          ? -0.24
+          : -0.48;
+    const targetX = THREE.MathUtils.lerp(0.39, 0, ads) + swayX * (1 - ads * 0.82);
     const targetY =
-      THREE.MathUtils.lerp(-0.4, -0.23, ads) -
-      swayY -
+      THREE.MathUtils.lerp(-0.4, aimY, ads) -
+      swayY * (1 - ads * 0.88) -
       reloadArc * 0.18;
     const targetZ =
-      THREE.MathUtils.lerp(-0.84, -0.62, ads) + this.weaponKick * 0.1;
+      THREE.MathUtils.lerp(-0.84, aimZ, ads) + this.weaponKick * 0.1;
     this.weaponRig.position.x = damp(this.weaponRig.position.x, targetX, 14, dt);
     this.weaponRig.position.y = damp(this.weaponRig.position.y, targetY, 14, dt);
     this.weaponRig.position.z = damp(this.weaponRig.position.z, targetZ, 18, dt);
@@ -1608,6 +1936,13 @@ export class GameEngine {
       13,
       dt,
     );
+    this.viewCamera.fov = damp(
+      this.viewCamera.fov,
+      this.scopeMode === "marksman" && ads > 0.2 ? 66 : 72,
+      10,
+      dt,
+    );
+    this.viewCamera.updateProjectionMatrix();
     const magazine = this.weaponRig.getObjectByName("magazine");
     if (magazine) {
       const drop =
@@ -1616,6 +1951,11 @@ export class GameEngine {
           : 0;
       magazine.position.y = -0.225 - drop;
       magazine.rotation.z = -reloadArc * 0.32;
+      this.weaponRig.traverse((part) => {
+        if (typeof part.userData.magazineBaseY !== "number") return;
+        part.position.y = part.userData.magazineBaseY - drop;
+        part.rotation.z = -reloadArc * 0.32;
+      });
     }
     this.muzzleFlash.intensity = Math.max(0, this.muzzleFlash.intensity - dt * 80);
   }
@@ -1632,7 +1972,15 @@ export class GameEngine {
     }
     this.reloadRemaining = this.currentClass.weapon.reloadTime;
     this.fireHeld = false;
+    this.audio.weaponAction("magout");
     this.callbacks.onNotice("RELOADING", this.currentClass.weapon.shortName);
+  }
+
+  private currentWeaponSound(): WeaponSoundProfile {
+    if (this.currentClass.weapon.shortName === "S-14") return "dmr";
+    if (this.currentClass.id === "medic") return "lmg";
+    if (this.currentClass.id === "engineer") return "carbine";
+    return "rifle";
   }
 
   private tryFire(): void {
@@ -1644,6 +1992,7 @@ export class GameEngine {
     if (this.reloadRemaining > 0) return;
     if (this.ammo <= 0) {
       this.fireCooldown = 0.2;
+      this.audio.weaponAction("dry");
       this.startReload();
       return;
     }
@@ -1657,7 +2006,7 @@ export class GameEngine {
     this.yaw += (this.random() - 0.5) * 0.006;
     this.muzzleFlash.intensity = 42;
     this.weaponFlashTimer = weapon.shortName === "S-14" ? 0.064 : 0.044;
-    this.audio.gunshot(weapon.shortName === "S-14");
+    this.audio.gunshot(this.currentWeaponSound());
 
     const origin = this.camera.getWorldPosition(this.tempA);
     const direction = this.camera.getWorldDirection(this.tempB);
@@ -1712,7 +2061,11 @@ export class GameEngine {
             .clone()
             .transformDirection(worldHit.object.matrixWorld)
         : new THREE.Vector3(0, 1, 0);
-      this.createImpact(hitPoint, impactNormal);
+      this.createImpact(
+        hitPoint,
+        impactNormal,
+        this.impactSurface(worldHit?.object),
+      );
     }
 
     if (this.ammo === 0 && this.reserve > 0) {
@@ -2488,7 +2841,7 @@ export class GameEngine {
     this.tickets.blue = Math.max(0, this.tickets.blue - 1);
     this.phase = "dead";
     this.fireHeld = false;
-    this.adsHeld = false;
+    this.clearCombatOverlays();
     if (document.pointerLockElement) document.exitPointerLock();
     this.callbacks.onPhase("dead");
     this.callbacks.onNotice("KILLED IN ACTION", "Choose a class and redeploy");
@@ -2621,6 +2974,7 @@ export class GameEngine {
       const won = this.tickets.red <= 0;
       this.phase = won ? "victory" : "defeat";
       this.fireHeld = false;
+      this.clearCombatOverlays();
       if (document.pointerLockElement) document.exitPointerLock();
       this.callbacks.onPhase(this.phase);
       this.callbacks.onNotice(
@@ -2633,26 +2987,70 @@ export class GameEngine {
 
   private createVehicle(): Vehicle {
     const group = new THREE.Group();
+    group.name = "marauder-6x6";
+    const body = new THREE.Group();
+    body.name = "marauder-sprung-body";
+    group.add(body);
+
+    const textureCanvas = document.createElement("canvas");
+    textureCanvas.width = textureCanvas.height = 256;
+    const textureContext = textureCanvas.getContext("2d")!;
+    textureContext.fillStyle = "#526052";
+    textureContext.fillRect(0, 0, 256, 256);
+    for (let index = 0; index < 620; index += 1) {
+      const x = this.random() * 256;
+      const y = this.random() * 256;
+      textureContext.strokeStyle =
+        this.random() > 0.62
+          ? `rgba(220,205,166,${0.025 + this.random() * 0.055})`
+          : `rgba(8,12,10,${0.035 + this.random() * 0.08})`;
+      textureContext.lineWidth = 0.5 + this.random() * 1.4;
+      textureContext.beginPath();
+      textureContext.moveTo(x, y);
+      textureContext.lineTo(
+        x + 3 + this.random() * 22,
+        y + (this.random() - 0.5) * 4,
+      );
+      textureContext.stroke();
+    }
+    const vehicleTexture = new THREE.CanvasTexture(textureCanvas);
+    vehicleTexture.colorSpace = THREE.SRGBColorSpace;
+    vehicleTexture.wrapS = vehicleTexture.wrapT = THREE.RepeatWrapping;
+    vehicleTexture.repeat.set(2.5, 3.4);
+    vehicleTexture.anisotropy = Math.min(
+      8,
+      this.renderer.capabilities.getMaxAnisotropy(),
+    );
+
     const armor = new THREE.MeshStandardMaterial({
-      color: 0x4e6255,
-      metalness: 0.48,
-      roughness: 0.54,
-      envMapIntensity: 0.8,
+      color: 0x687467,
+      map: vehicleTexture,
+      bumpMap: vehicleTexture,
+      bumpScale: 0.012,
+      metalness: 0.58,
+      roughness: 0.49,
+      envMapIntensity: 1,
     });
     const armorDark = new THREE.MeshStandardMaterial({
-      color: 0x202b29,
-      metalness: 0.68,
-      roughness: 0.4,
-      envMapIntensity: 0.95,
+      color: 0x1b2422,
+      metalness: 0.76,
+      roughness: 0.36,
+      envMapIntensity: 1.15,
     });
-    const glass = new THREE.MeshPhysicalMaterial({
-      color: 0x263f45,
-      metalness: 0.12,
-      roughness: 0.1,
-      transmission: 0.08,
+    const armorEdge = new THREE.MeshStandardMaterial({
+      color: 0x839080,
+      metalness: 0.7,
+      roughness: 0.32,
+      envMapIntensity: 1.2,
+    });
+    const glass = new THREE.MeshStandardMaterial({
+      color: 0x14292e,
+      metalness: 0.18,
+      roughness: 0.2,
       transparent: true,
-      opacity: 0.78,
+      opacity: 0.84,
       envMapIntensity: 1.3,
+      side: THREE.DoubleSide,
     });
     const rubber = new THREE.MeshStandardMaterial({
       color: 0x0e1110,
@@ -2665,216 +3063,525 @@ export class GameEngine {
       emissiveIntensity: 2.8,
       roughness: 0.32,
     });
+    const redLightMaterial = new THREE.MeshStandardMaterial({
+      color: 0x7a1f18,
+      emissive: 0xff3428,
+      emissiveIntensity: 1.7,
+      roughness: 0.38,
+    });
+    const canvasMaterial = new THREE.MeshStandardMaterial({
+      color: 0x394139,
+      roughness: 0.92,
+      metalness: 0.02,
+    });
+
+    const prismGeometry = (
+      width: number,
+      height: number,
+      length: number,
+      frontSlope = 0,
+      rearSlope = 0,
+    ) => {
+      const x = width / 2;
+      const y = height / 2;
+      const front = -length / 2;
+      const rear = length / 2;
+      const positions = new Float32Array([
+        -x, -y, front,
+        x, -y, front,
+        -x, -y, rear,
+        x, -y, rear,
+        -x, y, front + frontSlope,
+        x, y, front + frontSlope,
+        -x, y, rear - rearSlope,
+        x, y, rear - rearSlope,
+      ]);
+      const indices = [
+        0, 2, 1, 1, 2, 3,
+        4, 5, 6, 5, 7, 6,
+        0, 1, 4, 1, 5, 4,
+        2, 6, 3, 3, 6, 7,
+        0, 4, 2, 2, 4, 6,
+        1, 3, 5, 3, 7, 5,
+      ];
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(positions, 3),
+      );
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    };
+
+    const vHullGeometry = (width: number, height: number, length: number) => {
+      const x = width / 2;
+      const yTop = height / 2;
+      const yBottom = -height / 2;
+      const z = length / 2;
+      const positions = new Float32Array([
+        -x, yTop, -z,
+        x, yTop, -z,
+        0, yBottom, -z,
+        -x, yTop, z,
+        x, yTop, z,
+        0, yBottom, z,
+      ]);
+      const indices = [
+        0, 1, 2,
+        3, 5, 4,
+        0, 3, 1, 1, 3, 4,
+        0, 2, 3, 2, 5, 3,
+        1, 4, 2, 2, 4, 5,
+      ];
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(positions, 3),
+      );
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    };
+
     const addVehiclePart = (
       geometry: THREE.BufferGeometry,
       material: THREE.Material,
       position: [number, number, number],
       rotation: [number, number, number] = [0, 0, 0],
+      parent: THREE.Object3D = body,
+      name?: string,
     ) => {
       const mesh = new THREE.Mesh(geometry, material);
       mesh.position.set(...position);
       mesh.rotation.set(...rotation);
+      if (name) mesh.name = name;
       mesh.castShadow = !this.touchMode;
       mesh.receiveShadow = true;
-      group.add(mesh);
+      mesh.userData.surface = "metal";
+      parent.add(mesh);
       return mesh;
     };
 
+    // Mine-resistant V hull and upper armored tub.
     addVehiclePart(
-      new RoundedBoxGeometry(3.2, 0.9, 5.25, 4, 0.18),
-      armor,
-      [0, 1.08, 0],
-    );
-    addVehiclePart(
-      new RoundedBoxGeometry(2.86, 0.58, 1.72, 4, 0.15),
-      armor,
-      [0, 1.48, -2.02],
-      [-0.1, 0, 0],
-    );
-    addVehiclePart(
-      new RoundedBoxGeometry(2.52, 1.2, 2.22, 4, 0.15),
+      vHullGeometry(3.1, 0.95, 5.8),
       armorDark,
-      [0, 1.9, 0.18],
+      [0, 0.86, 0.12],
     );
     addVehiclePart(
-      new RoundedBoxGeometry(2.25, 0.23, 2.35, 3, 0.08),
+      prismGeometry(3.28, 0.86, 5.9, 0.34, 0.18),
       armor,
-      [0, 2.57, 0.2],
+      [0, 1.28, 0.08],
     );
     addVehiclePart(
-      new THREE.PlaneGeometry(1.92, 0.72),
-      glass,
-      [0, 2.02, -0.948],
-      [-0.08, 0, 0],
+      prismGeometry(2.82, 0.72, 1.82, 0.34, 0.06),
+      armor,
+      [0, 1.68, -2.1],
     );
+    addVehiclePart(
+      prismGeometry(2.68, 1.48, 2.78, 0.46, 0.16),
+      armor,
+      [0, 2.18, 0.06],
+    );
+    addVehiclePart(
+      new RoundedBoxGeometry(2.45, 0.18, 2.48, 3, 0.05),
+      armorEdge,
+      [0, 2.96, 0.18],
+    );
+
+    // Split ballistic windshield with a thick central mullion.
     for (const side of [-1, 1]) {
       addVehiclePart(
-        new THREE.PlaneGeometry(0.82, 0.68),
+        new THREE.PlaneGeometry(1.03, 0.68),
         glass,
-        [side * 1.266, 2.02, -0.03],
+        [side * 0.56, 2.39, -1.235],
+        [-0.21, 0, 0],
+      );
+    }
+    addVehiclePart(
+      new RoundedBoxGeometry(0.1, 0.82, 0.12, 3, 0.025),
+      armorDark,
+      [0, 2.39, -1.25],
+    );
+
+    for (const side of [-1, 1]) {
+      addVehiclePart(
+        new THREE.PlaneGeometry(0.88, 0.6),
+        glass,
+        [side * 1.436, 2.4, -0.43],
         [0, side * Math.PI / 2, 0],
       );
       addVehiclePart(
-        new RoundedBoxGeometry(0.18, 0.28, 4.72, 3, 0.05),
+        new THREE.PlaneGeometry(0.82, 0.58),
+        glass,
+        [side * 1.436, 2.4, 0.61],
+        [0, side * Math.PI / 2, 0],
+      );
+      // Armored doors, hinges, dogged handles and lower applique panels.
+      for (const z of [-0.43, 0.61]) {
+        addVehiclePart(
+          new RoundedBoxGeometry(0.08, 1.22, 0.94, 3, 0.025),
+          armor,
+          [side * 1.39, 2.05, z],
+        );
+        for (const hinge of [-0.31, 0.31]) {
+          addVehiclePart(
+            new THREE.CylinderGeometry(0.035, 0.035, 0.16, 10),
+            armorDark,
+            [side * 1.44, 2.04, z + hinge],
+            [0, 0, Math.PI / 2],
+          );
+        }
+        addVehiclePart(
+          new RoundedBoxGeometry(0.07, 0.05, 0.22, 3, 0.015),
+          armorDark,
+          [side * 1.455, 2.23, z - 0.2],
+        );
+      }
+      addVehiclePart(
+        new RoundedBoxGeometry(0.12, 0.44, 4.95, 3, 0.045),
         armorDark,
-        [side * 1.66, 1.08, 0.05],
+        [side * 1.68, 1.36, 0.16],
       );
       addVehiclePart(
-        new RoundedBoxGeometry(0.32, 0.3, 1.4, 3, 0.09),
+        new RoundedBoxGeometry(0.3, 0.34, 2.4, 3, 0.08),
         armor,
-        [side * 1.62, 1.52, 0.23],
+        [side * 1.61, 1.68, 0.42],
       );
+      // Mirrors and armored mirror arms.
       addVehiclePart(
         new THREE.CylinderGeometry(0.055, 0.055, 0.4, 8),
         armorDark,
-        [side * 1.53, 2.18, -0.94],
+        [side * 1.55, 2.47, -1.22],
         [0, 0, Math.PI / 2],
       );
       addVehiclePart(
-        new RoundedBoxGeometry(0.4, 0.18, 0.24, 3, 0.05),
+        new RoundedBoxGeometry(0.36, 0.22, 0.12, 3, 0.04),
         armorDark,
-        [side * 1.72, 2.18, -0.94],
+        [side * 1.76, 2.47, -1.22],
+      );
+      addVehiclePart(
+        new RoundedBoxGeometry(0.42, 0.08, 2.4, 3, 0.025),
+        armorDark,
+        [side * 1.74, 0.88, 0.2],
       );
     }
 
+    // Grille, ram bar, tow points, lamp cages and hood intake.
     addVehiclePart(
-      new RoundedBoxGeometry(3.26, 0.22, 0.36, 3, 0.07),
+      new RoundedBoxGeometry(3.35, 0.24, 0.32, 3, 0.07),
       armorDark,
-      [0, 0.7, -2.62],
+      [0, 0.88, -3.02],
     );
     addVehiclePart(
-      new RoundedBoxGeometry(2.4, 0.38, 0.15, 3, 0.045),
+      new RoundedBoxGeometry(2.44, 0.48, 0.12, 3, 0.04),
       armorDark,
-      [0, 1.35, -2.87],
+      [0, 1.48, -3.09],
     );
-    for (let grille = -4; grille <= 4; grille += 1) {
+    for (let grille = -5; grille <= 5; grille += 1) {
       addVehiclePart(
-        new THREE.BoxGeometry(0.09, 0.28, 0.035),
+        new THREE.BoxGeometry(0.075, 0.34, 0.035),
         rubber,
-        [grille * 0.22, 1.35, -2.96],
+        [grille * 0.19, 1.48, -3.17],
+      );
+    }
+    for (const x of [-1.42, 1.42]) {
+      addVehiclePart(
+        new THREE.TorusGeometry(0.12, 0.035, 7, 18, Math.PI * 1.45),
+        armorEdge,
+        [x, 0.75, -3.18],
+        [Math.PI / 2, 0, x < 0 ? -0.7 : 0.7],
+      );
+    }
+    for (const y of [0.92, 1.8]) {
+      addVehiclePart(
+        new THREE.CylinderGeometry(0.045, 0.045, 2.92, 10),
+        armorEdge,
+        [0, y, -3.27],
+        [0, 0, Math.PI / 2],
       );
     }
     for (const side of [-1, 1]) {
       addVehiclePart(
-        new RoundedBoxGeometry(0.42, 0.24, 0.09, 3, 0.05),
+        new THREE.CylinderGeometry(0.042, 0.042, 0.96, 10),
+        armorEdge,
+        [side * 1.44, 1.36, -3.27],
+      );
+    }
+    for (const side of [-1, 1]) {
+      addVehiclePart(
+        new RoundedBoxGeometry(0.38, 0.2, 0.08, 3, 0.045),
         lightMaterial,
-        [side * 1.03, 1.57, -2.88],
+        [side * 1.04, 1.78, -3.14],
       );
       addVehiclePart(
-        new THREE.TorusGeometry(0.67, 0.08, 8, 22, Math.PI),
-        armor,
-        [side * 1.58, 0.78, -1.62],
-        [0, Math.PI / 2, Math.PI / 2],
-      );
-      addVehiclePart(
-        new THREE.TorusGeometry(0.67, 0.08, 8, 22, Math.PI),
-        armor,
-        [side * 1.58, 0.78, 1.63],
-        [0, Math.PI / 2, Math.PI / 2],
+        new RoundedBoxGeometry(0.48, 0.12, 0.45, 3, 0.035),
+        armorDark,
+        [side * 0.98, 2.08, -2.42],
       );
     }
 
-    const wheels: THREE.Mesh[] = [];
-    const wheelGeometry = new THREE.CylinderGeometry(0.65, 0.65, 0.42, 20);
-    [
-      [-1.62, 0.66, -1.65],
-      [1.62, 0.66, -1.65],
-      [-1.62, 0.66, 1.62],
-      [1.62, 0.66, 1.62],
-    ].forEach(([x, y, z]) => {
-      const wheel = new THREE.Mesh(wheelGeometry, rubber);
-      wheel.position.set(x, y, z);
-      wheel.rotation.z = Math.PI / 2;
-      wheel.castShadow = !this.touchMode;
-      group.add(wheel);
-      const rim = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.32, 0.32, 0.435, 16),
-        armorDark,
-      );
-      rim.position.copy(wheel.position);
-      rim.rotation.z = Math.PI / 2;
-      group.add(rim);
-      for (let tread = 0; tread < 12; tread += 1) {
-        const angle = (tread / 12) * Math.PI * 2;
-        const treadBlock = new THREE.Mesh(
-          new RoundedBoxGeometry(0.47, 0.1, 0.18, 2, 0.035),
+    // Six independently rolling wheel assemblies with steering pivots up front.
+    const wheels: THREE.Group[] = [];
+    const steeringPivots: THREE.Group[] = [];
+    for (const z of [-1.92, 0.02, 1.92]) {
+      for (const side of [-1, 1]) {
+        const steeringPivot = new THREE.Group();
+        steeringPivot.position.set(side * 1.72, 0.73, z);
+        group.add(steeringPivot);
+        const wheel = new THREE.Group();
+        steeringPivot.add(wheel);
+        const tire = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.72, 0.72, 0.5, 24),
           rubber,
         );
-        treadBlock.position.set(
-          x,
-          y + Math.cos(angle) * 0.65,
-          z + Math.sin(angle) * 0.65,
+        tire.rotation.z = Math.PI / 2;
+        tire.castShadow = !this.touchMode;
+        tire.receiveShadow = true;
+        wheel.add(tire);
+        const rim = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.34, 0.34, 0.515, 20),
+          armorEdge,
         );
-        treadBlock.rotation.x = angle;
-        treadBlock.castShadow = !this.touchMode;
-        group.add(treadBlock);
+        rim.rotation.z = Math.PI / 2;
+        wheel.add(rim);
+        const hub = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.15, 0.15, 0.54, 16),
+          armorDark,
+        );
+        hub.rotation.z = Math.PI / 2;
+        wheel.add(hub);
+        for (let bolt = 0; bolt < 8; bolt += 1) {
+          const angle = (bolt / 8) * Math.PI * 2;
+          const lug = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.025, 0.025, 0.555, 8),
+            armorDark,
+          );
+          lug.position.set(0, Math.cos(angle) * 0.24, Math.sin(angle) * 0.24);
+          lug.rotation.z = Math.PI / 2;
+          wheel.add(lug);
+        }
+        for (let tread = 0; tread < 16; tread += 1) {
+          const angle = (tread / 16) * Math.PI * 2;
+          const treadBlock = new THREE.Mesh(
+            new RoundedBoxGeometry(0.53, 0.105, 0.2, 2, 0.028),
+            rubber,
+          );
+          treadBlock.position.set(
+            0,
+            Math.cos(angle) * 0.72,
+            Math.sin(angle) * 0.72,
+          );
+          treadBlock.rotation.x = angle;
+          treadBlock.castShadow = !this.touchMode;
+          wheel.add(treadBlock);
+        }
+        wheels.push(wheel);
+        if (z < -1) steeringPivots.push(steeringPivot);
       }
-      wheels.push(wheel);
-    });
+    }
+
+    // Fenders follow the sprung body and sit above each of the three axles.
+    for (const side of [-1, 1]) {
+      for (const z of [-1.92, 0.02, 1.92]) {
+        addVehiclePart(
+          new THREE.TorusGeometry(0.79, 0.08, 8, 28, Math.PI),
+          armor,
+          [side * 1.67, 0.85, z],
+          [0, Math.PI / 2, Math.PI / 2],
+        );
+      }
+    }
 
     const turret = new THREE.Group();
-    turret.position.set(0, 2.78, 0.28);
+    turret.name = "marauder-rws";
+    turret.position.set(0, 3.12, 0.28);
     const turretBase = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.68, 0.82, 0.36, 16),
+      new THREE.CylinderGeometry(0.68, 0.82, 0.28, 20),
       armorDark,
     );
     turret.add(turretBase);
+    const bearing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.65, 0.075, 8, 24),
+      armorEdge,
+    );
+    bearing.rotation.x = Math.PI / 2;
+    bearing.position.y = -0.08;
+    turret.add(bearing);
     const shield = new THREE.Mesh(
-      new RoundedBoxGeometry(0.92, 0.7, 0.52, 3, 0.09),
+      prismGeometry(1.08, 0.76, 0.64, 0.12, 0.04),
       armor,
     );
     shield.position.set(0, 0.43, -0.08);
     turret.add(shield);
+    for (const side of [-1, 1]) {
+      const cheek = new THREE.Mesh(
+        new THREE.BoxGeometry(0.22, 0.64, 0.72),
+        armor,
+      );
+      cheek.position.set(side * 0.59, 0.35, -0.03);
+      cheek.rotation.z = side * -0.13;
+      turret.add(cheek);
+    }
     const optics = new THREE.Mesh(
-      new RoundedBoxGeometry(0.28, 0.24, 0.28, 3, 0.055),
+      new RoundedBoxGeometry(0.3, 0.29, 0.34, 3, 0.05),
       armorDark,
     );
-    optics.position.set(0.46, 0.58, -0.14);
+    optics.position.set(0.46, 0.61, -0.18);
     turret.add(optics);
-    const opticLens = new THREE.Mesh(
-      new THREE.CircleGeometry(0.08, 14),
-      glass,
+    for (const [x, radius, color] of [
+      [0.41, 0.07, 0x63c4d2],
+      [0.52, 0.052, 0xdba95e],
+    ] as const) {
+      const opticLens = new THREE.Mesh(
+        new THREE.CircleGeometry(radius, 18),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.42,
+          depthWrite: false,
+          toneMapped: false,
+        }),
+      );
+      opticLens.position.set(x, 0.62, -0.357);
+      opticLens.rotation.y = Math.PI;
+      turret.add(opticLens);
+    }
+    const shroud = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.105, 0.105, 1.56, 16, 1, true),
+      armorDark,
     );
-    opticLens.position.set(0.46, 0.58, -0.292);
-    opticLens.rotation.y = Math.PI;
-    turret.add(opticLens);
+    shroud.rotation.x = Math.PI / 2;
+    shroud.position.set(-0.17, 0.43, -1.12);
+    turret.add(shroud);
+    for (let ring = 0; ring < 8; ring += 1) {
+      const coolingRing = new THREE.Mesh(
+        new THREE.TorusGeometry(0.108, 0.012, 6, 16),
+        armorDark,
+      );
+      coolingRing.position.set(-0.17, 0.43, -0.52 - ring * 0.18);
+      turret.add(coolingRing);
+    }
     const gun = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.058, 0.082, 2.45, 12),
+      new THREE.CylinderGeometry(0.052, 0.068, 2.72, 14),
       armorDark,
     );
     gun.rotation.x = Math.PI / 2;
-    gun.position.set(-0.16, 0.44, -1.27);
+    gun.position.set(-0.17, 0.43, -1.54);
     turret.add(gun);
     const muzzleBrake = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.1, 0.1, 0.2, 12),
+      new THREE.CylinderGeometry(0.115, 0.105, 0.28, 14),
       armorDark,
     );
     muzzleBrake.rotation.x = Math.PI / 2;
-    muzzleBrake.position.set(-0.16, 0.44, -2.53);
+    muzzleBrake.position.set(-0.17, 0.43, -2.94);
     turret.add(muzzleBrake);
+    for (const side of [-1, 1]) {
+      const brakePort = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 0.06, 0.1),
+        rubber,
+      );
+      brakePort.position.set(-0.17 + side * 0.085, 0.43, -2.95);
+      turret.add(brakePort);
+    }
+    const rwsMuzzle = new THREE.Object3D();
+    rwsMuzzle.name = "rws-muzzle";
+    rwsMuzzle.position.set(-0.17, 0.43, -3.12);
+    turret.add(rwsMuzzle);
     const ammoBox = new THREE.Mesh(
-      new RoundedBoxGeometry(0.42, 0.48, 0.62, 3, 0.06),
+      new RoundedBoxGeometry(0.5, 0.52, 0.7, 3, 0.055),
       armor,
     );
-    ammoBox.position.set(-0.6, 0.34, 0.02);
+    ammoBox.position.set(-0.68, 0.32, 0.02);
     turret.add(ammoBox);
-    group.add(turret);
+    for (let link = 0; link < 7; link += 1) {
+      const feed = new THREE.Mesh(
+        new RoundedBoxGeometry(0.05, 0.025, 0.075, 2, 0.008),
+        armorEdge,
+      );
+      feed.position.set(
+        -0.54 + link * 0.06,
+        0.52 + Math.sin((link / 6) * Math.PI) * 0.08,
+        -0.22 - link * 0.015,
+      );
+      feed.rotation.z = -0.2 + link * 0.06;
+      turret.add(feed);
+    }
+    body.add(turret);
 
+    // Roof furniture: hatch, twin antennas and convoy strobe.
     addVehiclePart(
-      new THREE.CylinderGeometry(0.018, 0.025, 2.65, 7),
+      new THREE.TorusGeometry(0.58, 0.08, 8, 28),
       armorDark,
-      [0.82, 3.42, 0.72],
+      [0, 3.04, 0.32],
+      [Math.PI / 2, 0, 0],
+    );
+    addVehiclePart(
+      new THREE.CylinderGeometry(0.016, 0.024, 2.45, 7),
+      armorDark,
+      [0.94, 4.12, 0.82],
       [0.08, 0, -0.04],
     );
+    addVehiclePart(
+      new THREE.CylinderGeometry(0.012, 0.02, 1.86, 7),
+      armorDark,
+      [-0.98, 3.86, 0.9],
+      [-0.06, 0, 0.05],
+    );
+    addVehiclePart(
+      new RoundedBoxGeometry(0.15, 0.11, 0.16, 3, 0.025),
+      lightMaterial,
+      [0, 3.15, 1.12],
+    );
+
+    // Rear stowage, spare wheel, mud flaps and tail lighting.
+    addVehiclePart(
+      new THREE.CylinderGeometry(0.66, 0.66, 0.34, 22),
+      rubber,
+      [0, 1.7, 3.08],
+      [Math.PI / 2, 0, 0],
+    );
+    addVehiclePart(
+      new THREE.CylinderGeometry(0.31, 0.31, 0.37, 16),
+      armorEdge,
+      [0, 1.7, 3.1],
+      [Math.PI / 2, 0, 0],
+    );
+    for (const side of [-1, 1]) {
+      addVehiclePart(
+        new RoundedBoxGeometry(0.46, 0.72, 0.24, 3, 0.055),
+        armor,
+        [side * 0.92, 1.58, 3.02],
+      );
+      for (let groove = -1; groove <= 1; groove += 1) {
+        addVehiclePart(
+          new THREE.BoxGeometry(0.32, 0.025, 0.03),
+          armorDark,
+          [side * 0.92, 1.58 + groove * 0.16, 3.15],
+        );
+      }
+      addVehiclePart(
+        new RoundedBoxGeometry(0.25, 0.18, 0.07, 3, 0.035),
+        redLightMaterial,
+        [side * 1.28, 1.6, 3.16],
+      );
+      addVehiclePart(
+        new RoundedBoxGeometry(0.52, 0.56, 0.08, 3, 0.02),
+        canvasMaterial,
+        [side * 1.38, 0.58, 2.72],
+      );
+    }
+
     const teamPanel = addVehiclePart(
-      new THREE.PlaneGeometry(0.58, 0.32),
+      new THREE.PlaneGeometry(0.72, 0.38),
       new THREE.MeshStandardMaterial({
         color: BLUE,
         emissive: 0x0f5369,
         emissiveIntensity: 0.42,
         roughness: 0.72,
       }),
-      [1.611, 1.46, 0.58],
+      [1.446, 2.02, 0.58],
       [0, Math.PI / 2, 0],
     );
     teamPanel.castShadow = false;
@@ -2884,10 +3591,12 @@ export class GameEngine {
     this.scene.add(group);
     return {
       group,
+      body,
       turret,
       wheels,
-      health: 260,
-      maxHealth: 260,
+      steeringPivots,
+      health: 340,
+      maxHealth: 340,
       speed: 0,
       yaw: VEHICLE_DEPLOYMENT_YAW,
       occupied: false,
@@ -2899,19 +3608,33 @@ export class GameEngine {
 
   private updateVehicle(dt: number): void {
     if (this.vehicle.destroyed) return;
-    const throttle =
+    const throttle = clamp(
       (this.keys.has("KeyW") ? 1 : 0) -
-      (this.keys.has("KeyS") ? 1 : 0) +
-      this.touch.move.y;
-    const steering =
+        (this.keys.has("KeyS") ? 1 : 0) +
+        this.touch.move.y,
+      -1,
+      1,
+    );
+    const steering = clamp(
       (this.keys.has("KeyA") ? 1 : 0) -
-      (this.keys.has("KeyD") ? 1 : 0) -
-      this.touch.move.x;
-    const targetSpeed = throttle >= 0 ? throttle * 17 : throttle * 8;
-    this.vehicle.speed = damp(this.vehicle.speed, targetSpeed, throttle ? 2.2 : 3.6, dt);
+        (this.keys.has("KeyD") ? 1 : 0) -
+        this.touch.move.x,
+      -1,
+      1,
+    );
+    const targetSpeed = throttle >= 0 ? throttle * 18.5 : throttle * 8.5;
+    this.vehicle.speed = damp(
+      this.vehicle.speed,
+      targetSpeed,
+      throttle ? 1.85 : 3.2,
+      dt,
+    );
     if (Math.abs(this.vehicle.speed) > 0.25) {
       this.vehicle.yaw +=
-        steering * dt * 0.9 * clamp(Math.abs(this.vehicle.speed) / 7, 0.25, 1) *
+        steering *
+        dt *
+        0.72 *
+        clamp(Math.abs(this.vehicle.speed) / 7, 0.22, 1) *
         Math.sign(this.vehicle.speed);
     }
 
@@ -2923,8 +3646,8 @@ export class GameEngine {
     const next = this.tempB
       .copy(this.vehicle.group.position)
       .addScaledVector(forward, this.vehicle.speed * dt);
-    next.x = clamp(next.x, -148, 148);
-    next.z = clamp(next.z, -148, 148);
+    next.x = clamp(next.x, -MAP_BOUNDARY + 4, MAP_BOUNDARY - 4);
+    next.z = clamp(next.z, -MAP_BOUNDARY + 4, MAP_BOUNDARY - 4);
     if (!this.vehicleCollides(next.x, next.z)) {
       this.vehicle.group.position.x = next.x;
       this.vehicle.group.position.z = next.z;
@@ -2934,27 +3657,122 @@ export class GameEngine {
     this.vehicle.group.position.y =
       terrainHeight(this.vehicle.group.position.x, this.vehicle.group.position.z) + 0.05;
     this.vehicle.group.rotation.y = this.vehicle.yaw;
-    const wheelSpin = this.vehicle.speed * dt * 1.6;
+    const frontHeight = terrainHeight(
+      this.vehicle.group.position.x + forward.x * 2.35,
+      this.vehicle.group.position.z + forward.z * 2.35,
+    );
+    const rearHeight = terrainHeight(
+      this.vehicle.group.position.x - forward.x * 2.35,
+      this.vehicle.group.position.z - forward.z * 2.35,
+    );
+    const terrainPitch = Math.atan2(frontHeight - rearHeight, 4.7);
+    this.vehicle.body.rotation.x = damp(
+      this.vehicle.body.rotation.x,
+      terrainPitch + throttle * 0.012,
+      5.5,
+      dt,
+    );
+    this.vehicle.body.rotation.z = damp(
+      this.vehicle.body.rotation.z,
+      -steering *
+        clamp(Math.abs(this.vehicle.speed) / 18.5, 0, 1) *
+        0.045,
+      6.2,
+      dt,
+    );
+    this.vehicle.body.position.y = damp(
+      this.vehicle.body.position.y,
+      Math.sin(this.elapsed * 11) *
+        0.012 *
+        clamp(Math.abs(this.vehicle.speed) / 18.5, 0, 1),
+      8,
+      dt,
+    );
+
+    const wheelSpin = -this.vehicle.speed * dt / 0.72;
     this.vehicle.wheels.forEach((wheel) => {
       wheel.rotation.x += wheelSpin;
     });
+    this.vehicle.steeringPivots.forEach((pivot) => {
+      pivot.rotation.y = damp(
+        pivot.rotation.y,
+        steering * 0.32,
+        8,
+        dt,
+      );
+    });
+
+    this.vehicleDustClock -= dt;
+    if (Math.abs(this.vehicle.speed) > 4 && this.vehicleDustClock <= 0) {
+      this.vehicleDustClock = this.touchMode ? 0.14 : 0.075;
+      this.createVehicleDust();
+    }
 
     this.vehicle.fireCooldown = Math.max(0, this.vehicle.fireCooldown - dt);
     this.vehicle.turret.rotation.y = this.yaw - this.vehicle.yaw;
-    this.playerPosition.copy(this.vehicle.group.position).add(new THREE.Vector3(0, 2.25, 0));
+    this.audio.setVehicleEngine(true, this.vehicle.speed, throttle);
+    this.playerPosition
+      .copy(this.vehicle.group.position)
+      .add(this.tempC.set(0, 3.54, 0));
     this.camera.position.copy(this.playerPosition);
-    this.camera.rotation.set(this.pitch, this.yaw, 0);
-    this.camera.fov = damp(this.camera.fov, this.adsHeld ? 55 : 78, 8, dt);
+    this.cameraImpulse = damp(this.cameraImpulse, 0, 19, dt);
+    this.camera.rotation.set(
+      this.pitch + this.cameraImpulse * 0.009,
+      this.yaw,
+      this.vehicle.body.rotation.z * 0.22 + this.cameraImpulse * 0.002,
+    );
+    this.camera.fov = damp(this.camera.fov, this.adsHeld ? 48 : 76, 8, dt);
     this.camera.updateProjectionMatrix();
+    this.setText(
+      "vehicle-speed",
+      Math.round(Math.abs(this.vehicle.speed) * 3.6).toString().padStart(2, "0"),
+    );
+    this.setText(
+      "vehicle-bearing",
+      `${Math.round((((THREE.MathUtils.radToDeg(-this.yaw) % 360) + 360) % 360))
+        .toString()
+        .padStart(3, "0")}°`,
+    );
+  }
+
+  private createVehicleDust(): void {
+    for (const side of [-1, 1]) {
+      const offset = this.tempA
+        .set(side * 1.52, 0.28, 2.28)
+        .applyAxisAngle(new THREE.Vector3(0, 1, 0), this.vehicle.yaw);
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22 + this.random() * 0.14, 6, 5),
+        new THREE.MeshBasicMaterial({
+          color: 0x9d8062,
+          transparent: true,
+          opacity: 0.28,
+          depthWrite: false,
+        }),
+      );
+      mesh.position.copy(this.vehicle.group.position).add(offset);
+      this.scene.add(mesh);
+      this.particles.push({
+        mesh,
+        velocity: new THREE.Vector3(
+          (this.random() - 0.5) * 0.8,
+          0.45 + this.random() * 0.42,
+          (this.random() - 0.5) * 0.8,
+        ),
+        life: 0.7,
+        maxLife: 0.7,
+        gravity: -0.12,
+        grow: 1.4,
+      });
+    }
   }
 
   private vehicleCollides(x: number, z: number): boolean {
     for (const collider of this.world.colliders) {
       if (
-        x > collider.box.min.x - 1.65 &&
-        x < collider.box.max.x + 1.65 &&
-        z > collider.box.min.z - 2.35 &&
-        z < collider.box.max.z + 2.35
+        x > collider.box.min.x - 1.82 &&
+        x < collider.box.max.x + 1.82 &&
+        z > collider.box.min.z - 3.05 &&
+        z < collider.box.max.z + 3.05
       ) {
         return true;
       }
@@ -2968,30 +3786,39 @@ export class GameEngine {
       this.inVehicle = false;
       this.vehicle.occupied = false;
       this.weaponRig.visible = true;
+      this.audio.setVehicleEngine(false);
       const side = this.tempA.set(Math.cos(this.vehicle.yaw), 0, -Math.sin(this.vehicle.yaw));
       this.playerPosition
         .copy(this.vehicle.group.position)
-        .addScaledVector(side, 2.5);
+        .addScaledVector(side, 2.9);
       this.playerPosition.y =
         terrainHeight(this.playerPosition.x, this.playerPosition.z) + PLAYER_HEIGHT;
-      this.callbacks.onNotice("DISMOUNTED", "KITE LRV");
+      this.callbacks.onNotice("DISMOUNTED", "MARAUDER 6×6");
       return;
     }
-    if (this.playerPosition.distanceTo(this.vehicle.group.position) < 5.2) {
+    if (this.playerPosition.distanceTo(this.vehicle.group.position) < 6) {
       this.inVehicle = true;
       this.vehicle.occupied = true;
       this.weaponRig.visible = false;
       this.yaw = this.vehicle.yaw;
       this.pitch = -0.04;
-      this.callbacks.onNotice("VEHICLE READY", "KITE LRV · 12.7 MM RWS");
+      this.callbacks.onNotice(
+        "VEHICLE READY",
+        "MARAUDER 6×6 · 12.7 MM REMOTE WEAPON STATION",
+      );
     }
   }
 
   private fireVehicleWeapon(): void {
     if (this.vehicle.fireCooldown > 0 || this.vehicle.destroyed) return;
     this.vehicle.fireCooldown = 0.11;
-    this.audio.gunshot(true);
+    this.audio.gunshot("vehicle");
+    this.cameraImpulse = Math.min(1.25, this.cameraImpulse + 0.86);
     const origin = this.camera.position.clone();
+    const muzzleOrigin =
+      this.vehicle.turret
+        .getObjectByName("rws-muzzle")
+        ?.getWorldPosition(new THREE.Vector3()) ?? origin.clone();
     const direction = this.camera.getWorldDirection(new THREE.Vector3());
     direction.x += (this.random() - 0.5) * 0.007;
     direction.y += (this.random() - 0.5) * 0.007;
@@ -3015,7 +3842,8 @@ export class GameEngine {
         point = closest;
       }
     }
-    this.createTracer(origin, point, 0xffdc8a);
+    this.createVehicleMuzzleFlash(muzzleOrigin, direction);
+    this.createTracer(muzzleOrigin, point, 0xffdc8a);
     if (target) {
       this.damageBot(target, 42, false, "player");
       this.showHitmarker(false, !target.alive);
@@ -3025,7 +3853,49 @@ export class GameEngine {
             .clone()
             .transformDirection(worldHit.object.matrixWorld)
         : new THREE.Vector3(0, 1, 0);
-      this.createImpact(point, impactNormal);
+      this.createImpact(
+        point,
+        impactNormal,
+        this.impactSurface(worldHit?.object),
+      );
+    }
+  }
+
+  private createVehicleMuzzleFlash(
+    point: THREE.Vector3,
+    direction: THREE.Vector3,
+  ): void {
+    const colors = [0xfff0b5, 0xffb34e, 0xe86a28];
+    for (let index = 0; index < 5; index += 1) {
+      const material = new THREE.MeshBasicMaterial({
+        color: colors[index % colors.length],
+        transparent: true,
+        opacity: 0.94 - index * 0.09,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      });
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.08 + index * 0.025, 6, 5),
+        material,
+      );
+      mesh.position
+        .copy(point)
+        .addScaledVector(direction, index * 0.11 + this.random() * 0.04);
+      mesh.scale.set(0.7, 0.7, 1.5 + index * 0.52);
+      mesh.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 0, 1),
+        direction,
+      );
+      this.scene.add(mesh);
+      this.particles.push({
+        mesh,
+        velocity: direction.clone().multiplyScalar(2.4 + index * 0.6),
+        life: 0.075 + index * 0.012,
+        maxLife: 0.125,
+        gravity: 0,
+        grow: 1.8,
+      });
     }
   }
 
@@ -3035,6 +3905,7 @@ export class GameEngine {
     this.vehicle.respawnAt = this.elapsed + 25;
     this.createExplosion(this.vehicle.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 1.45);
     this.inVehicle = false;
+    this.audio.setVehicleEngine(false);
     this.weaponRig.visible = true;
     this.playerHealth = 0;
     this.killPlayer();
@@ -3047,6 +3918,11 @@ export class GameEngine {
     this.vehicle.speed = 0;
     this.vehicle.yaw = VEHICLE_DEPLOYMENT_YAW;
     this.vehicle.group.rotation.y = VEHICLE_DEPLOYMENT_YAW;
+    this.vehicle.body.rotation.set(0, 0, 0);
+    this.vehicle.body.position.y = 0;
+    this.vehicle.steeringPivots.forEach((pivot) => {
+      pivot.rotation.y = 0;
+    });
     this.vehicle.destroyed = false;
     this.vehicle.occupied = false;
   }
@@ -3145,7 +4021,7 @@ export class GameEngine {
           });
         }, 180);
         this.gadgetCooldown = 24;
-        this.audio.gunshot(true);
+        this.audio.gunshot("launcher");
         this.callbacks.onNotice("M3 LAUNCHED", "Impact");
         break;
       }
@@ -3220,19 +4096,69 @@ export class GameEngine {
     });
   }
 
-  private createImpact(point: THREE.Vector3, normal: THREE.Vector3): void {
-    this.audio.impact();
+  private impactSurface(object?: THREE.Object3D): ImpactSurface {
+    let target = object;
+    while (target) {
+      const surface = target.userData.surface;
+      if (
+        surface === "concrete" ||
+        surface === "metal" ||
+        surface === "wood" ||
+        surface === "sand" ||
+        surface === "dirt" ||
+        surface === "glass" ||
+        surface === "flesh"
+      ) {
+        return surface;
+      }
+      target = target.parent ?? undefined;
+    }
+    return "concrete";
+  }
+
+  private createImpact(
+    point: THREE.Vector3,
+    normal: THREE.Vector3,
+    surface: ImpactSurface = "concrete",
+  ): void {
+    const relative = this.tempA.copy(point).sub(this.camera.position);
+    const impactPan = Math.sin(Math.atan2(relative.x, relative.z) - this.yaw);
+    this.audio.impact(surface, impactPan);
+    const decalColors: Record<ImpactSurface, number> = {
+      concrete: 0x24211d,
+      metal: 0x151919,
+      wood: 0x2c2118,
+      sand: 0x67543d,
+      dirt: 0x4f4030,
+      glass: 0x34474a,
+      flesh: 0x5f201c,
+    };
     const decalMaterial = new THREE.MeshBasicMaterial({
-      color: 0x171512,
+      color: decalColors[surface],
       transparent: true,
-      opacity: 0.72,
+      opacity: surface === "sand" || surface === "dirt" ? 0.48 : 0.68,
       depthWrite: false,
       polygonOffset: true,
       polygonOffsetFactor: -4,
       side: THREE.DoubleSide,
     });
+    // Irregular fracture profile. The old perfect black CircleGeometry could
+    // visually lock to the centre ray and look like a disc following the
+    // reticle as the player swept across nearby walls.
+    const fracture = new THREE.Shape();
+    const points = 9;
+    const radius = 0.038 + this.random() * 0.035;
+    for (let index = 0; index < points; index += 1) {
+      const angle = (index / points) * Math.PI * 2;
+      const edge = radius * (0.56 + this.random() * 0.5);
+      const x = Math.cos(angle) * edge;
+      const y = Math.sin(angle) * edge;
+      if (index === 0) fracture.moveTo(x, y);
+      else fracture.lineTo(x, y);
+    }
+    fracture.closePath();
     const decal = new THREE.Mesh(
-      new THREE.CircleGeometry(0.065 + this.random() * 0.055, 10),
+      new THREE.ShapeGeometry(fracture),
       decalMaterial,
     );
     decal.position.copy(point).addScaledVector(normal, 0.012);
@@ -3253,9 +4179,18 @@ export class GameEngine {
         }
       }
     }
-    for (let i = 0; i < 5; i += 1) {
+    const sparkCount = surface === "metal" ? 7 : surface === "sand" ? 4 : 5;
+    for (let i = 0; i < sparkCount; i += 1) {
+      const spark =
+        surface === "metal" && i < 4
+          ? 0xffc069
+          : surface === "wood"
+            ? 0x765038
+            : surface === "sand" || surface === "dirt"
+              ? 0x927657
+              : 0x8a7358;
       const material = new THREE.MeshBasicMaterial({
-        color: i < 2 ? 0xffc069 : 0x8a7358,
+        color: spark,
         transparent: true,
       });
       const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.025 + this.random() * 0.035, 5, 4), material);
@@ -3413,7 +4348,10 @@ export class GameEngine {
     }
     if (this.vehicle.destroyed && this.elapsed >= this.vehicle.respawnAt) {
       this.resetVehicle();
-      this.callbacks.onNotice("VEHICLE AVAILABLE", "KITE LRV redeployed at FOB Atlas");
+      this.callbacks.onNotice(
+        "VEHICLE AVAILABLE",
+        "MARAUDER 6×6 redeployed at FOB Atlas",
+      );
     }
   }
 
@@ -3421,13 +4359,13 @@ export class GameEngine {
     const hint = document.getElementById("interaction-hint");
     if (!hint) return;
     if (this.inVehicle) {
-      hint.textContent = "E  EXIT KITE LRV";
+      hint.textContent = "E  EXIT MARAUDER 6×6";
       hint.classList.add("is-visible");
     } else if (
       !this.vehicle.destroyed &&
-      this.playerPosition.distanceTo(this.vehicle.group.position) < 5.2
+      this.playerPosition.distanceTo(this.vehicle.group.position) < 6
     ) {
-      hint.textContent = "E  ENTER KITE LRV";
+      hint.textContent = "E  ENTER MARAUDER 6×6";
       hint.classList.add("is-visible");
     } else {
       hint.classList.remove("is-visible");
@@ -3492,7 +4430,9 @@ export class GameEngine {
     this.setText("ammo-reserve", this.inVehicle ? "12.7 MM" : `/ ${this.reserve}`);
     this.setText(
       "weapon-name",
-      this.inVehicle ? "KITE LRV RWS" : this.currentClass.weapon.shortName,
+      this.inVehicle
+        ? "MARAUDER 6×6 RWS"
+        : this.currentClass.weapon.shortName,
     );
     this.setText("grenade-count", this.inVehicle ? "—" : `× ${this.grenadesRemaining}`);
     this.setText(

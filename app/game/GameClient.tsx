@@ -268,6 +268,62 @@ export default function GameClient() {
           </div>
         </div>
 
+        <div
+          id="scope-overlay"
+          className="scope-overlay"
+          data-optic="combat"
+          aria-hidden="true"
+        >
+          <div className="scope-frame">
+            <div className="scope-glass">
+              <svg
+                className="scope-reticle"
+                viewBox="0 0 200 200"
+                role="presentation"
+              >
+                <circle cx="100" cy="100" r="94" className="scope-edge-line" />
+                <line x1="13" y1="100" x2="78" y2="100" />
+                <line x1="122" y1="100" x2="187" y2="100" />
+                <line x1="100" y1="13" x2="100" y2="77" />
+                <line x1="100" y1="123" x2="100" y2="187" />
+                <path className="scope-chevron" d="M92 92 L100 102 L108 92" />
+                <g className="scope-stadia">
+                  <line x1="84" y1="116" x2="116" y2="116" />
+                  <line x1="89" y1="130" x2="111" y2="130" />
+                  <line x1="93" y1="144" x2="107" y2="144" />
+                  <circle cx="100" cy="158" r="1.8" />
+                  <circle cx="100" cy="172" r="1.5" />
+                </g>
+              </svg>
+              <span className="scope-zoom">1.75×</span>
+              <span className="scope-zero">ZERO 100 M</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="vehicle-overlay" aria-hidden="true">
+          <div className="vehicle-topline">
+            <span>MARAUDER 6×6</span>
+            <b>RWS / STABILIZED</b>
+          </div>
+          <div className="vehicle-reticle">
+            <i />
+            <i />
+            <span />
+          </div>
+          <div className="vehicle-telemetry">
+            <span>
+              SPD <b id="vehicle-speed">00</b> KPH
+            </span>
+            <span>
+              HDG <b id="vehicle-bearing">000°</b>
+            </span>
+            <span>
+              AP <b>12.7×99</b>
+            </span>
+          </div>
+        </div>
+
         <div className="crosshair" aria-hidden="true">
           <i className="crosshair-top" />
           <i className="crosshair-right" />
@@ -523,7 +579,7 @@ export default function GameClient() {
               <b>SPACE</b> JUMP
             </span>
             <span className="build-label">
-              FIELD BUILD 1.3.0 · KHARIF DENSITY PASS
+              FIELD BUILD 1.4.0 · COMBAT SYSTEMS PASS
             </span>
           </footer>
         </section>

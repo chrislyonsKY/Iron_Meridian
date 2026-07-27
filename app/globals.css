@@ -584,6 +584,275 @@ button {
   font-family: var(--font-mono-ui);
 }
 
+.scope-overlay {
+  --ads-progress: 0;
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.scope-overlay.is-visible {
+  visibility: visible;
+}
+
+.scope-frame {
+  width: min(31vmin, 380px);
+  aspect-ratio: 1;
+  padding: 10px;
+  border: 2px solid rgba(132, 143, 134, 0.72);
+  border-radius: 50%;
+  background:
+    repeating-conic-gradient(
+      from 4deg,
+      rgba(164, 171, 158, 0.4) 0deg 1deg,
+      rgba(15, 19, 18, 0.8) 1deg 9deg
+    );
+  box-shadow:
+    0 0 0 6px #0c100f,
+    0 0 0 10px rgba(77, 85, 79, 0.95),
+    0 0 0 12px rgba(5, 7, 7, 0.92),
+    0 0 0 80vmax rgba(3, 6, 7, 0.52),
+    0 16px 42px rgba(0, 0, 0, 0.66);
+  transform: scale(calc(0.78 + var(--ads-progress) * 0.22));
+  transform-origin: center;
+}
+
+.scope-overlay[data-optic="marksman"] .scope-frame {
+  width: min(38vmin, 460px);
+  box-shadow:
+    0 0 0 7px #090c0c,
+    0 0 0 12px rgba(68, 76, 71, 0.98),
+    0 0 0 15px rgba(4, 6, 6, 0.96),
+    0 0 0 80vmax rgba(2, 4, 5, 0.7),
+    0 18px 48px rgba(0, 0, 0, 0.72);
+}
+
+.scope-glass {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(140, 210, 202, 0.33);
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      circle at 48% 44%,
+      rgba(136, 203, 201, 0.025) 0 46%,
+      rgba(47, 108, 112, 0.11) 72%,
+      rgba(3, 10, 12, 0.38) 100%
+    );
+  box-shadow:
+    inset 0 0 24px rgba(62, 157, 165, 0.14),
+    inset 0 0 3px rgba(197, 246, 230, 0.6);
+  backdrop-filter: saturate(0.82) contrast(1.08);
+}
+
+.scope-glass::before {
+  position: absolute;
+  inset: 7%;
+  border-radius: 50%;
+  background:
+    linear-gradient(128deg, rgba(147, 224, 215, 0.11), transparent 26%),
+    radial-gradient(circle at 58% 63%, transparent 57%, rgba(219, 160, 88, 0.07));
+  content: "";
+}
+
+.scope-reticle {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: none;
+  stroke: rgba(30, 35, 32, 0.92);
+  stroke-width: 1.25;
+  filter:
+    drop-shadow(0 0 1px rgba(238, 255, 235, 0.55))
+    drop-shadow(0 1px 0 rgba(0, 0, 0, 0.8));
+}
+
+.scope-reticle .scope-edge-line {
+  stroke: rgba(167, 207, 195, 0.16);
+  stroke-width: 0.8;
+}
+
+.scope-reticle .scope-chevron {
+  stroke: #d54832;
+  stroke-width: 2.2;
+}
+
+.scope-reticle .scope-stadia {
+  stroke-width: 1;
+}
+
+.scope-reticle .scope-stadia circle {
+  fill: rgba(28, 32, 30, 0.94);
+}
+
+.scope-zoom,
+.scope-zero {
+  position: absolute;
+  bottom: 12%;
+  color: rgba(205, 226, 214, 0.55);
+  font-family: var(--font-mono-ui);
+  font-size: clamp(7px, 0.72vmin, 10px);
+  letter-spacing: 0.12em;
+  text-shadow: 0 1px 2px #000;
+}
+
+.scope-zoom {
+  left: 17%;
+}
+
+.scope-zero {
+  right: 16%;
+}
+
+.scope-overlay[data-optic="marksman"] .scope-zoom {
+  color: transparent;
+}
+
+.scope-overlay[data-optic="marksman"] .scope-zoom::after {
+  color: rgba(205, 226, 214, 0.55);
+  font-size: clamp(7px, 0.72vmin, 10px);
+  content: "4.0×";
+}
+
+.vehicle-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 7;
+  width: min(62vw, 880px);
+  height: min(58vh, 620px);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(1.025);
+  pointer-events: none;
+  transition: opacity 120ms ease-out, transform 150ms ease-out;
+}
+
+.battle-hud.is-vehicle .vehicle-overlay {
+  opacity: 0.9;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.vehicle-overlay::before,
+.vehicle-overlay::after {
+  position: absolute;
+  inset: 0;
+  border-color: rgba(135, 219, 213, 0.48);
+  content: "";
+}
+
+.vehicle-overlay::before {
+  border-top: 2px solid;
+  border-right: 2px solid;
+  clip-path: polygon(66% 0, 100% 0, 100% 34%, 99.7% 34%, 99.7% 0.4%, 66% 0.4%);
+}
+
+.vehicle-overlay::after {
+  border-bottom: 2px solid;
+  border-left: 2px solid;
+  clip-path: polygon(0 66%, 0.4% 66%, 0.4% 99.6%, 34% 99.6%, 34% 100%, 0 100%);
+}
+
+.vehicle-topline,
+.vehicle-telemetry {
+  position: absolute;
+  right: 22px;
+  left: 22px;
+  display: flex;
+  justify-content: space-between;
+  color: rgba(186, 230, 221, 0.72);
+  font-family: var(--font-mono-ui);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-shadow: 0 1px 3px #000;
+}
+
+.vehicle-topline {
+  top: 16px;
+}
+
+.vehicle-topline b,
+.vehicle-telemetry b {
+  color: #e1f2ea;
+  font-weight: 700;
+}
+
+.vehicle-telemetry {
+  bottom: 16px;
+  justify-content: center;
+  gap: clamp(24px, 6vw, 80px);
+}
+
+.vehicle-reticle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 112px;
+  height: 112px;
+  border: 1px solid rgba(169, 223, 215, 0.32);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.vehicle-reticle::before,
+.vehicle-reticle::after {
+  position: absolute;
+  background: rgba(187, 233, 224, 0.72);
+  content: "";
+}
+
+.vehicle-reticle::before {
+  top: 55px;
+  left: -24px;
+  width: 160px;
+  height: 1px;
+}
+
+.vehicle-reticle::after {
+  top: -24px;
+  left: 55px;
+  width: 1px;
+  height: 160px;
+}
+
+.vehicle-reticle i {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 10px;
+  margin-top: -5px;
+  border-top: 2px solid rgba(209, 240, 232, 0.9);
+  border-bottom: 2px solid rgba(209, 240, 232, 0.9);
+}
+
+.vehicle-reticle i:first-child {
+  left: 12px;
+}
+
+.vehicle-reticle i:nth-child(2) {
+  right: 12px;
+}
+
+.vehicle-reticle span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  border: 1px solid #dd5c3f;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
 .crosshair {
   position: absolute;
   top: 50%;
@@ -592,6 +861,12 @@ button {
   height: 38px;
   transform: translate(-50%, -50%);
   filter: drop-shadow(0 1px 2px #000);
+  transition: opacity 90ms ease-out;
+}
+
+.battle-hud.is-ads .crosshair,
+.battle-hud.is-vehicle .crosshair {
+  opacity: 0;
 }
 
 .crosshair i {

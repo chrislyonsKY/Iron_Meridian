@@ -17,7 +17,9 @@ export interface BuiltWorld {
   vehicleSpawn: THREE.Vector3;
 }
 
-const MAP_SIZE = 340;
+const MAP_SIZE = 260;
+const WORLD_AXIS_SCALE = 0.78;
+const WORLD_SIDE_SCALE = 0.86;
 export const MAIN_ROAD_ROTATION = 2.18;
 const MAIN_AXIS = new THREE.Vector2(
   Math.sin(MAIN_ROAD_ROTATION),
@@ -74,9 +76,11 @@ function localToWorld(
 }
 
 function axisPoint(distance: number, sideOffset = 0): [number, number] {
+  const axialDistance = distance * WORLD_AXIS_SCALE;
+  const lateralDistance = sideOffset * WORLD_SIDE_SCALE;
   return [
-    MAIN_AXIS.x * distance + MAIN_SIDE.x * sideOffset,
-    MAIN_AXIS.y * distance + MAIN_SIDE.y * sideOffset,
+    MAIN_AXIS.x * axialDistance + MAIN_SIDE.x * lateralDistance,
+    MAIN_AXIS.y * axialDistance + MAIN_SIDE.y * lateralDistance,
   ];
 }
 
@@ -513,6 +517,85 @@ function addWindow(
   }
 }
 
+function addFacadeWear(
+  scene: THREE.Scene,
+  staticMeshes: THREE.Object3D[],
+  materials: BattlefieldMaterials,
+  building: BuildingOptions,
+): void {
+  const random = seeded(
+    Math.abs(Math.round(building.x * 113 + building.z * 173 + building.height * 41)),
+  );
+  const rotation = building.rotation ?? 0;
+  const ground = terrainHeight(building.x, building.z);
+  const patchMaterial =
+    building.wall === materials.brick ? materials.plasterWarm : materials.concreteDark;
+  for (let patchIndex = 0; patchIndex < 3; patchIndex += 1) {
+    const radiusX = 0.48 + random() * 0.72;
+    const radiusY = 0.35 + random() * 0.58;
+    const shape = new THREE.Shape();
+    const points = 9;
+    for (let pointIndex = 0; pointIndex < points; pointIndex += 1) {
+      const angle = (pointIndex / points) * Math.PI * 2;
+      const jitter = 0.68 + random() * 0.4;
+      const px = Math.cos(angle) * radiusX * jitter;
+      const py = Math.sin(angle) * radiusY * jitter;
+      if (pointIndex === 0) shape.moveTo(px, py);
+      else shape.lineTo(px, py);
+    }
+    shape.closePath();
+    const localX =
+      (random() - 0.5) * Math.max(1, building.width - radiusX * 2.6);
+    const localY =
+      1.1 + random() * Math.max(0.8, building.height - 2.2);
+    const [x, z] = localToWorld(
+      building.x,
+      building.z,
+      rotation,
+      localX,
+      building.depth / 2 + 0.092,
+    );
+    const patch = new THREE.Mesh(new THREE.ShapeGeometry(shape), patchMaterial);
+    patch.position.set(x, ground + localY, z);
+    patch.rotation.y = rotation;
+    patch.castShadow = false;
+    patch.receiveShadow = true;
+    scene.add(patch);
+    staticMeshes.push(patch);
+  }
+
+  for (let streakIndex = 0; streakIndex < 3; streakIndex += 1) {
+    const localX =
+      -building.width * 0.34 + streakIndex * building.width * 0.31 +
+      (random() - 0.5) * 0.45;
+    const streakHeight = 0.65 + random() * 1.3;
+    const [x, z] = localToWorld(
+      building.x,
+      building.z,
+      rotation,
+      localX,
+      building.depth / 2 + 0.098,
+    );
+    addBox(
+      scene,
+      [],
+      staticMeshes,
+      materials.concreteDark,
+      new THREE.Vector3(
+        x,
+        ground + building.height * 0.42 - streakHeight * 0.5,
+        z,
+      ),
+      new THREE.Vector3(0.045 + random() * 0.06, streakHeight, 0.018),
+      {
+        rotation,
+        collider: false,
+        shadows: false,
+      },
+    );
+  }
+}
+
 function addBuilding(
   scene: THREE.Scene,
   colliders: Collider[],
@@ -537,6 +620,7 @@ function addBuilding(
     },
   );
   base.userData.surface = "concrete";
+  addFacadeWear(scene, staticMeshes, materials, options);
 
   const accent = options.accent ?? materials.concreteDark;
   addBox(
@@ -1467,6 +1551,214 @@ function addMarketStalls(
   });
 }
 
+function addArcadedMarket(
+  scene: THREE.Scene,
+  colliders: Collider[],
+  staticMeshes: THREE.Object3D[],
+  materials: BattlefieldMaterials,
+): void {
+  const bayDistances = [-120, -101, -82, -63, -44, -25, -6, 13, 32, 51, 70, 89, 108, 127];
+  const shopNames = [
+    ["QAMAR", "SPICES & TEA", "#38483f"],
+    ["NAJMA", "TEXTILES", "#654538"],
+    ["SAFA", "RADIO REPAIR", "#354b52"],
+    ["HADID", "TOOLS & SUPPLY", "#5a4b34"],
+    ["ALLEY 17", "KHARIF MARKET", "#513d45"],
+    ["MERIDIAN", "COFFEE HOUSE", "#42503b"],
+  ] as const;
+  const signMaterials = shopNames.map(([title, subtitle, background]) => {
+    const texture = makeSignTexture(title, subtitle, background);
+    return new THREE.MeshStandardMaterial({
+      map: texture,
+      emissiveMap: texture,
+      emissive: 0x6a4526,
+      emissiveIntensity: 0.36,
+      roughness: 0.72,
+    });
+  });
+  const canopyMaterials = [0x775244, 0x3e5a57, 0x8a7043, 0x51596b].map(
+    (color) => {
+      const material = materials.fabric.clone();
+      material.color.setHex(color);
+      material.roughness = 0.96;
+      return material;
+    },
+  );
+  const litInterior = materials.emissiveWarm.clone();
+  litInterior.color.setHex(0x6f4b2c);
+  litInterior.emissive.setHex(0xff7e33);
+  litInterior.emissiveIntensity = 1.5;
+  const darkInterior = materials.windowDark.clone();
+  darkInterior.color.setHex(0x101517);
+  darkInterior.roughness = 0.84;
+
+  for (const sideOffset of [-14.7, 14.7]) {
+    const sideSign = Math.sign(sideOffset);
+    bayDistances.forEach((distance, bayIndex) => {
+      const [centerX, centerZ] = axisPoint(distance, sideOffset);
+      const ground = terrainHeight(centerX, centerZ);
+      const rotation = MAIN_ROAD_ROTATION;
+      const bayWidth = 6.45;
+      const toWorld = (localX: number, localZ: number) =>
+        localToWorld(centerX, centerZ, rotation, localX, localZ);
+      const roadward = -sideSign;
+      const interiorPosition = toWorld(roadward * 0.08, 0);
+
+      addBox(
+        scene,
+        colliders,
+        staticMeshes,
+        bayIndex % 4 === 0 ? litInterior : darkInterior,
+        new THREE.Vector3(interiorPosition[0], ground + 1.62, interiorPosition[1]),
+        new THREE.Vector3(0.16, 3.16, bayWidth - 0.46),
+        { rotation, collider: false, shadows: false },
+      );
+
+      for (const end of [-1, 1]) {
+        const postPosition = toWorld(roadward * 0.34, end * bayWidth * 0.5);
+        addBox(
+          scene,
+          colliders,
+          staticMeshes,
+          bayIndex % 3 === 0 ? materials.brick : materials.concreteDark,
+          new THREE.Vector3(postPosition[0], ground + 1.92, postPosition[1]),
+          new THREE.Vector3(0.44, 3.84, 0.42),
+          {
+            rotation,
+            collider: false,
+            surface: "concrete",
+            bevel: 0.045,
+          },
+        );
+      }
+
+      const lintelPosition = toWorld(roadward * 0.34, 0);
+      addBox(
+        scene,
+        colliders,
+        staticMeshes,
+        materials.concreteDark,
+        new THREE.Vector3(lintelPosition[0], ground + 3.76, lintelPosition[1]),
+        new THREE.Vector3(0.48, 0.38, bayWidth + 0.35),
+        {
+          rotation,
+          collider: false,
+          surface: "concrete",
+          bevel: 0.04,
+        },
+      );
+
+      const arch = new THREE.Mesh(
+        new THREE.TorusGeometry(1.54, 0.17, 7, 20, Math.PI),
+        bayIndex % 3 === 0 ? materials.brick : materials.plasterWarm,
+      );
+      const archPosition = toWorld(roadward * 0.58, 0);
+      arch.position.set(archPosition[0], ground + 2.1, archPosition[1]);
+      arch.rotation.y =
+        MAIN_ROAD_ROTATION + (sideSign > 0 ? -Math.PI / 2 : Math.PI / 2);
+      arch.castShadow = true;
+      arch.receiveShadow = true;
+      scene.add(arch);
+      staticMeshes.push(arch);
+
+      const canopyPosition = toWorld(roadward * 1.65, 0);
+      const canopy = addBox(
+        scene,
+        colliders,
+        staticMeshes,
+        canopyMaterials[(bayIndex + (sideSign > 0 ? 1 : 0)) % canopyMaterials.length],
+        new THREE.Vector3(canopyPosition[0], ground + 3.22, canopyPosition[1]),
+        new THREE.Vector3(2.75, 0.09, bayWidth - 0.55),
+        {
+          rotation,
+          collider: false,
+          surface: "wood",
+          bevel: 0.035,
+        },
+      );
+      canopy.rotation.z = roadward * (0.045 + (bayIndex % 3) * 0.012);
+
+      const signPosition = toWorld(roadward * 0.61, 0);
+      const sign = new THREE.Mesh(
+        new THREE.PlaneGeometry(3.45, 0.72),
+        signMaterials[(bayIndex + (sideSign > 0 ? 2 : 0)) % signMaterials.length],
+      );
+      sign.position.set(signPosition[0], ground + 3.55, signPosition[1]);
+      sign.rotation.y = streetFacingRotation(sideOffset);
+      sign.castShadow = false;
+      scene.add(sign);
+      staticMeshes.push(sign);
+
+      if (bayIndex % 4 === 0) {
+        const lightPosition = toWorld(roadward * 1.4, 0);
+        const interiorLight = new THREE.PointLight(0xff8f4c, 6.5, 10, 2);
+        interiorLight.position.set(
+          lightPosition[0],
+          ground + 2.45,
+          lightPosition[1],
+        );
+        scene.add(interiorLight);
+      }
+
+      const crateCount = 1 + (bayIndex % 3);
+      for (let crateIndex = 0; crateIndex < crateCount; crateIndex += 1) {
+        const cratePosition = toWorld(
+          roadward * (1.05 + crateIndex * 0.48),
+          -1.65 + crateIndex * 1.1,
+        );
+        addBox(
+          scene,
+          colliders,
+          staticMeshes,
+          crateIndex % 2 ? materials.wood : materials.rustedMetal,
+          new THREE.Vector3(
+            cratePosition[0],
+            ground + 0.34 + crateIndex * 0.04,
+            cratePosition[1],
+          ),
+          new THREE.Vector3(0.62, 0.68, 0.72),
+          {
+            rotation: rotation + crateIndex * 0.09,
+            collider: false,
+            surface: crateIndex % 2 ? "wood" : "metal",
+            bevel: 0.035,
+          },
+        );
+      }
+    });
+  }
+
+  const shadeSpans = [-88, -48, -8, 33, 74, 112] as const;
+  shadeSpans.forEach((distance, index) => {
+    const [x, z] = axisPoint(distance, 0);
+    const ground = terrainHeight(x, z);
+    const shade = addBox(
+      scene,
+      colliders,
+      staticMeshes,
+      canopyMaterials[(index + 1) % canopyMaterials.length],
+      new THREE.Vector3(x, ground + 7.2 + (index % 2) * 0.55, z),
+      new THREE.Vector3(27.5, 0.07, 5.8),
+      {
+        rotation: MAIN_ROAD_ROTATION,
+        collider: false,
+        shadows: true,
+      },
+    );
+    shade.rotation.z = index % 2 ? 0.018 : -0.024;
+    const left = axisPoint(distance, -17.5);
+    const right = axisPoint(distance, 17.5);
+    addPowerCable(
+      scene,
+      staticMeshes,
+      materials.rubber,
+      new THREE.Vector3(left[0], ground + 7.55, left[1]),
+      new THREE.Vector3(right[0], ground + 7.55, right[1]),
+      0.5,
+    );
+  });
+}
+
 function addUrbanInfill(
   scene: THREE.Scene,
   colliders: Collider[],
@@ -1785,8 +2077,8 @@ function addDebrisField(
     let z = 0;
     let attempts = 0;
     do {
-      x = (random() - 0.5) * 322;
-      z = (random() - 0.5) * 322;
+      x = (random() - 0.5) * 246;
+      z = (random() - 0.5) * 246;
       attempts += 1;
     } while (
       attempts < 20 &&
@@ -1821,7 +2113,7 @@ function addDebrisField(
   );
   for (let index = 0; index < 74; index += 1) {
     const angle = random() * Math.PI * 2;
-    const radius = 52 + random() * 110;
+    const radius = 42 + random() * 78;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
     const scale = 0.35 + random() * 0.95;
@@ -2074,7 +2366,7 @@ export function buildWorld(
     0,
     0,
     15.5,
-    330,
+    252,
     MAIN_ROAD_ROTATION,
     true,
   );
@@ -2087,7 +2379,7 @@ export function buildWorld(
     crossX,
     crossZ,
     10,
-    126,
+    96,
     MAIN_ROAD_ROTATION + Math.PI / 2,
     false,
   );
@@ -2100,7 +2392,7 @@ export function buildWorld(
     depotCrossX,
     depotCrossZ,
     8,
-    102,
+    78,
     MAIN_ROAD_ROTATION + Math.PI / 2,
     false,
   );
@@ -2274,6 +2566,7 @@ export function buildWorld(
     ),
   );
 
+  addArcadedMarket(scene, colliders, staticMeshes, materials);
   addMarketStalls(scene, colliders, staticMeshes, materials);
   addStreetDressing(scene, colliders, staticMeshes, materials);
 

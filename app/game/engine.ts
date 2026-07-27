@@ -28,10 +28,17 @@ interface Bot {
   name: string;
   team: Team;
   group: THREE.Group;
+  visualRoot: THREE.Group;
+  pelvis: THREE.Group;
+  spine: THREE.Group;
   leftArm: THREE.Group;
   rightArm: THREE.Group;
   leftLeg: THREE.Group;
   rightLeg: THREE.Group;
+  leftLowerLeg: THREE.Group;
+  rightLowerLeg: THREE.Group;
+  leftFoot: THREE.Group;
+  rightFoot: THREE.Group;
   muzzle: THREE.Object3D;
   health: number;
   alive: boolean;
@@ -97,7 +104,7 @@ interface TouchState {
 const PLAYER_HEIGHT = 1.72;
 const CROUCH_HEIGHT = 1.12;
 const PLAYER_RADIUS = 0.42;
-const MAP_BOUNDARY = 153;
+const MAP_BOUNDARY = 122;
 const BOT_COUNT_PER_TEAM = 7;
 const BLUE = 0x39c4f4;
 const RED = 0xff654f;
@@ -160,13 +167,13 @@ const CINEMATIC_GRADE_SHADER = {
       vec3 color = vec3(red, green, blue);
 
       float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
-      vec3 shadowTint = vec3(0.89, 0.96, 1.03);
-      vec3 highlightTint = vec3(1.055, 1.012, 0.945);
+      vec3 shadowTint = vec3(0.84, 0.93, 1.055);
+      vec3 highlightTint = vec3(1.075, 1.008, 0.91);
       color *= mix(shadowTint, highlightTint, smoothstep(0.12, 0.86, luminance));
-      color = (color - 0.5) * 1.08 + 0.5;
+      color = (color - 0.5) * 1.115 + 0.5;
 
       float vignette = smoothstep(1.18, 0.24, length(centered * vec2(0.82, 1.0)));
-      color *= mix(0.72, 1.0, vignette);
+      color *= mix(0.66, 1.0, vignette);
       float grain = hash12(gl_FragCoord.xy + fract(time) * 913.7) - 0.5;
       color += grain * (0.007 + (1.0 - luminance) * 0.0045);
       color = mix(color, color * vec3(0.74, 0.22, 0.16), damage * (0.22 + length(centered) * 0.13));
@@ -304,7 +311,7 @@ export class GameEngine {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1;
+    this.renderer.toneMappingExposure = 0.92;
     this.renderer.autoClear = false;
     this.renderer.domElement.className = "game-canvas";
     this.renderer.domElement.setAttribute(
@@ -316,17 +323,17 @@ export class GameEngine {
 
     this.scene.background = new THREE.Color(0x17283a);
     this.scene.fog = new THREE.FogExp2(
-      0x9b806b,
-      this.touchMode ? 0.0045 : 0.00275,
+      0x8d725f,
+      this.touchMode ? 0.0048 : 0.0032,
     );
     this.camera.rotation.order = "YXZ";
     this.scene.add(this.camera);
     this.viewScene.add(this.viewCamera);
     this.viewCamera.add(this.weaponRig);
 
-    const hemisphere = new THREE.HemisphereLight(0xb5d3e5, 0x3d3029, 0.74);
+    const hemisphere = new THREE.HemisphereLight(0xa9c8da, 0x2b211d, 0.5);
     this.scene.add(hemisphere);
-    const sun = new THREE.DirectionalLight(0xffc98f, 5.15);
+    const sun = new THREE.DirectionalLight(0xffc48a, 4.7);
     sun.position.set(-128, 58, -116);
     sun.castShadow = !this.touchMode;
     sun.shadow.mapSize.set(2048, 2048);
@@ -341,10 +348,10 @@ export class GameEngine {
     sun.shadow.radius = 2;
     sun.shadow.blurSamples = 12;
     this.scene.add(sun);
-    const warmFill = new THREE.DirectionalLight(0xe09962, 0.3);
+    const warmFill = new THREE.DirectionalLight(0xe09962, 0.18);
     warmFill.position.set(90, 18, 80);
     this.scene.add(warmFill);
-    const coolRim = new THREE.DirectionalLight(0x8eb4c9, 0.27);
+    const coolRim = new THREE.DirectionalLight(0x86b7d2, 0.46);
     coolRim.position.set(34, 42, -90);
     this.scene.add(coolRim);
 
@@ -372,11 +379,11 @@ export class GameEngine {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     if (!this.touchMode) {
       this.gtaoPass = new GTAOPass(this.scene, this.camera, 1, 1);
-      this.gtaoPass.blendIntensity = 0.62;
+      this.gtaoPass.blendIntensity = 0.76;
       this.gtaoPass.updateGtaoMaterial({
-        radius: 3.2,
+        radius: 2.4,
         distanceExponent: 1.7,
-        thickness: 1.35,
+        thickness: 1.6,
         distanceFallOff: 1,
         scale: 1.05,
         samples: 12,
@@ -1722,10 +1729,17 @@ export class GameEngine {
         name: BOT_NAMES[i % BOT_NAMES.length],
         team,
         group,
+        visualRoot: group.getObjectByName("visualRoot") as THREE.Group,
+        pelvis: group.getObjectByName("pelvis") as THREE.Group,
+        spine: group.getObjectByName("spine") as THREE.Group,
         leftArm: group.getObjectByName("leftArm") as THREE.Group,
         rightArm: group.getObjectByName("rightArm") as THREE.Group,
         leftLeg: group.getObjectByName("leftLeg") as THREE.Group,
         rightLeg: group.getObjectByName("rightLeg") as THREE.Group,
+        leftLowerLeg: group.getObjectByName("leftLowerLeg") as THREE.Group,
+        rightLowerLeg: group.getObjectByName("rightLowerLeg") as THREE.Group,
+        leftFoot: group.getObjectByName("leftFoot") as THREE.Group,
+        rightFoot: group.getObjectByName("rightFoot") as THREE.Group,
         muzzle: group.getObjectByName("muzzle")!,
         health: 100,
         alive: true,
@@ -1745,35 +1759,41 @@ export class GameEngine {
 
   private createBotModel(team: Team): THREE.Group {
     const group = new THREE.Group();
+    group.name = `${team}NavigationRoot`;
+    const visualRoot = new THREE.Group();
+    visualRoot.name = "visualRoot";
+    visualRoot.scale.setScalar(1.035);
+    group.add(visualRoot);
+
     const uniform = new THREE.MeshStandardMaterial({
-      color: team === "blue" ? 0x4f625d : 0x615246,
-      roughness: 0.92,
+      color: team === "blue" ? 0x465b54 : 0x615144,
+      roughness: 0.96,
       metalness: 0,
     });
     const armor = new THREE.MeshStandardMaterial({
-      color: team === "blue" ? 0x263b3e : 0x40302c,
-      roughness: 0.68,
-      metalness: 0.08,
-      envMapIntensity: 0.52,
+      color: team === "blue" ? 0x21373a : 0x3c2d27,
+      roughness: 0.75,
+      metalness: 0.06,
+      envMapIntensity: 0.62,
     });
     const accent = new THREE.MeshStandardMaterial({
       color: team === "blue" ? BLUE : RED,
       emissive: team === "blue" ? 0x0d4c63 : 0x641c13,
-      emissiveIntensity: 0.62,
-      roughness: 0.58,
+      emissiveIntensity: 0.7,
+      roughness: 0.52,
     });
     const skin = new THREE.MeshStandardMaterial({
-      color: 0x8c6b52,
-      roughness: 0.88,
+      color: 0x806047,
+      roughness: 0.92,
     });
     const weapon = new THREE.MeshStandardMaterial({
-      color: 0x171c1c,
-      metalness: 0.7,
-      roughness: 0.36,
+      color: 0x111717,
+      metalness: 0.76,
+      roughness: 0.32,
       envMapIntensity: 0.9,
     });
     const rubber = new THREE.MeshStandardMaterial({
-      color: 0x101515,
+      color: 0x0d1212,
       roughness: 0.86,
     });
 
@@ -1782,7 +1802,7 @@ export class GameEngine {
       material: THREE.Material,
       position: [number, number, number],
       rotation: [number, number, number] = [0, 0, 0],
-      parent: THREE.Object3D = group,
+      parent: THREE.Object3D = visualRoot,
     ) => {
       const mesh = new THREE.Mesh(geometry, material);
       mesh.position.set(...position);
@@ -1793,48 +1813,83 @@ export class GameEngine {
       return mesh;
     };
 
+    // The navigation root owns translation and yaw. The animated soldier lives
+    // in a separate +Z-forward visual root, so gait and aiming can never invert
+    // the transform that decides which way the bot moves.
+    const pelvis = new THREE.Group();
+    pelvis.name = "pelvis";
+    pelvis.position.y = 0.91;
+    visualRoot.add(pelvis);
     addBotMesh(
-      new RoundedBoxGeometry(0.57, 0.68, 0.34, 3, 0.11),
+      new RoundedBoxGeometry(0.48, 0.24, 0.36, 3, 0.07),
+      armor,
+      [0, 0, 0.015],
+      [0, 0, 0],
+      pelvis,
+    );
+
+    const spine = new THREE.Group();
+    spine.name = "spine";
+    spine.position.y = 1.2;
+    visualRoot.add(spine);
+    addBotMesh(
+      new RoundedBoxGeometry(0.57, 0.64, 0.35, 3, 0.1),
       uniform,
-      [0, 1.17, 0],
+      [0, 0.02, 0],
+      [0, 0, 0],
+      spine,
     );
     addBotMesh(
-      new RoundedBoxGeometry(0.64, 0.51, 0.43, 3, 0.075),
+      new RoundedBoxGeometry(0.63, 0.49, 0.43, 3, 0.07),
       armor,
-      [0, 1.18, 0.035],
-    );
-    addBotMesh(
-      new RoundedBoxGeometry(0.5, 0.12, 0.45, 3, 0.025),
-      armor,
-      [0, 0.9, 0.025],
+      [0, 0.03, 0.055],
+      [0, 0, 0],
+      spine,
     );
     for (let pouch = -1; pouch <= 1; pouch += 1) {
       addBotMesh(
         new RoundedBoxGeometry(0.14, 0.19, 0.09, 2, 0.025),
         armor,
-        [pouch * 0.17, 1.04, 0.245],
+        [pouch * 0.17, -0.11, 0.27],
+        [0, 0, 0],
+        spine,
       );
     }
     addBotMesh(
-      new RoundedBoxGeometry(0.4, 0.52, 0.16, 3, 0.05),
+      new RoundedBoxGeometry(0.42, 0.5, 0.18, 3, 0.05),
       armor,
-      [0, 1.2, -0.24],
+      [0, 0.04, -0.25],
+      [0, 0, 0],
+      spine,
+    );
+    addBotMesh(
+      new THREE.CylinderGeometry(0.025, 0.035, 0.48, 7),
+      weapon,
+      [-0.13, 0.36, -0.29],
+      [0.08, 0, -0.04],
+      spine,
     );
     addBotMesh(
       new THREE.CapsuleGeometry(0.12, 0.08, 4, 9),
       uniform,
-      [0, 1.55, 0],
+      [0, 0.39, 0],
+      [0, 0, 0],
+      spine,
     );
     const head = addBotMesh(
       new THREE.SphereGeometry(0.19, 14, 10),
       skin,
-      [0, 1.72, -0.005],
+      [0, 0.53, 0.015],
+      [0, 0, 0],
+      spine,
     );
     head.scale.set(0.9, 1.05, 0.92);
     addBotMesh(
-      new RoundedBoxGeometry(0.33, 0.16, 0.23, 3, 0.055),
+      new RoundedBoxGeometry(0.31, 0.14, 0.2, 3, 0.05),
       armor,
-      [0, 1.66, -0.02],
+      [0, 0.48, 0.045],
+      [0, 0, 0],
+      spine,
     );
     const helmet = new THREE.Mesh(
       new THREE.SphereGeometry(
@@ -1848,18 +1903,22 @@ export class GameEngine {
       ),
       armor,
     );
-    helmet.position.set(0, 1.82, 0);
+    helmet.position.set(0, 0.63, 0.005);
     helmet.castShadow = !this.touchMode;
-    group.add(helmet);
+    spine.add(helmet);
     addBotMesh(
-      new THREE.BoxGeometry(0.3, 0.035, 0.25),
+      new THREE.BoxGeometry(0.31, 0.035, 0.24),
       armor,
-      [0, 1.82, 0.075],
+      [0, 0.64, 0.09],
+      [0, 0, 0],
+      spine,
     );
     addBotMesh(
       new RoundedBoxGeometry(0.32, 0.09, 0.055, 2, 0.018),
       rubber,
-      [0, 1.75, 0.185],
+      [0, 0.56, 0.19],
+      [0, 0, 0],
+      spine,
     );
     for (const side of [-1, 1]) {
       const lens = addBotMesh(
@@ -1871,7 +1930,9 @@ export class GameEngine {
           transparent: true,
           opacity: 0.8,
         }),
-        [side * 0.071, 1.755, 0.216],
+        [side * 0.071, 0.565, 0.221],
+        [0, 0, 0],
+        spine,
       );
       lens.rotation.y = 0;
     }
@@ -1879,101 +1940,196 @@ export class GameEngine {
     addBotMesh(
       new RoundedBoxGeometry(0.22, 0.095, 0.025, 2, 0.01),
       accent,
-      [0, 1.29, 0.255],
+      [0, 0.11, 0.285],
+      [0, 0, 0],
+      spine,
+    );
+    addBotMesh(
+      new THREE.ConeGeometry(0.09, 0.17, 3),
+      accent,
+      [0, 0.09, 0.306],
+      [Math.PI / 2, 0, 0],
+      spine,
     );
     for (const shoulder of [-1, 1]) {
       addBotMesh(
         new THREE.SphereGeometry(0.15, 10, 7),
         armor,
-        [shoulder * 0.36, 1.43, 0],
+        [shoulder * 0.36, 0.23, 0],
+        [0, 0, 0],
+        spine,
       ).scale.set(1.15, 0.75, 1);
     }
 
-    const createLimb = (name: string, x: number, y: number, leg: boolean) => {
-      const limb = new THREE.Group();
-      limb.name = name;
-      limb.position.set(x, y, 0);
+    const createLeg = (side: "left" | "right", x: number) => {
+      const upperLeg = new THREE.Group();
+      upperLeg.name = `${side}Leg`;
+      upperLeg.position.set(x, 0.86, 0);
       const upper = new THREE.Mesh(
-        new THREE.CapsuleGeometry(
-          leg ? 0.115 : 0.09,
-          leg ? 0.31 : 0.25,
-          4,
-          8,
-        ),
+        new THREE.CapsuleGeometry(0.115, 0.24, 4, 8),
         uniform,
       );
-      upper.position.y = leg ? -0.23 : -0.19;
+      upper.position.y = -0.2;
       upper.castShadow = !this.touchMode;
-      limb.add(upper);
-      const lower = new THREE.Mesh(
-        new THREE.CapsuleGeometry(
-          leg ? 0.105 : 0.082,
-          leg ? 0.29 : 0.24,
-          4,
-          8,
-        ),
-        leg ? uniform : armor,
+      upperLeg.add(upper);
+      const upperWebbing = new THREE.Mesh(
+        new RoundedBoxGeometry(0.16, 0.09, 0.19, 2, 0.025),
+        armor,
       );
-      lower.position.y = leg ? -0.62 : -0.51;
+      upperWebbing.position.set(0, -0.08, 0.03);
+      upperLeg.add(upperWebbing);
+
+      const lowerLeg = new THREE.Group();
+      lowerLeg.name = `${side}LowerLeg`;
+      lowerLeg.position.y = -0.39;
+      upperLeg.add(lowerLeg);
+      const lower = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.102, 0.23, 4, 8),
+        uniform,
+      );
+      lower.position.y = -0.195;
       lower.castShadow = !this.touchMode;
-      limb.add(lower);
-      if (leg) {
-        const knee = new THREE.Mesh(
-          new RoundedBoxGeometry(0.19, 0.17, 0.11, 2, 0.035),
-          armor,
-        );
-        knee.position.set(0, -0.43, 0.07);
-        limb.add(knee);
-        const boot = new THREE.Mesh(
-          new RoundedBoxGeometry(0.2, 0.15, 0.31, 3, 0.05),
-          rubber,
-        );
-        boot.position.set(0, -0.88, 0.07);
-        limb.add(boot);
-      } else {
-        const glove = new THREE.Mesh(
-          new RoundedBoxGeometry(0.13, 0.14, 0.13, 3, 0.04),
-          rubber,
-        );
-        glove.position.set(0, -0.72, -0.02);
-        limb.add(glove);
-      }
-      group.add(limb);
-      return limb;
+      lowerLeg.add(lower);
+      const knee = new THREE.Mesh(
+        new RoundedBoxGeometry(0.19, 0.16, 0.12, 2, 0.035),
+        armor,
+      );
+      knee.position.set(0, 0.015, 0.075);
+      lowerLeg.add(knee);
+
+      const foot = new THREE.Group();
+      foot.name = `${side}Foot`;
+      foot.position.y = -0.39;
+      lowerLeg.add(foot);
+      const boot = new THREE.Mesh(
+        new RoundedBoxGeometry(0.205, 0.15, 0.36, 3, 0.045),
+        rubber,
+      );
+      boot.position.set(0, -0.035, 0.095);
+      boot.castShadow = !this.touchMode;
+      foot.add(boot);
+      const sole = new THREE.Mesh(
+        new RoundedBoxGeometry(0.215, 0.045, 0.39, 2, 0.015),
+        weapon,
+      );
+      sole.position.set(0, -0.105, 0.095);
+      foot.add(sole);
+      visualRoot.add(upperLeg);
     };
-    createLimb("leftLeg", -0.17, 0.84, true);
-    createLimb("rightLeg", 0.17, 0.84, true);
-    createLimb("leftArm", -0.39, 1.43, false);
-    createLimb("rightArm", 0.39, 1.43, false);
+    createLeg("left", -0.17);
+    createLeg("right", 0.17);
+
+    const createArm = (side: "left" | "right", x: number) => {
+      const arm = new THREE.Group();
+      arm.name = `${side}Arm`;
+      arm.position.set(x, 0.24, 0.015);
+      arm.rotation.x = -0.68;
+      const upper = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.09, 0.22, 4, 8),
+        uniform,
+      );
+      upper.position.y = -0.18;
+      upper.castShadow = !this.touchMode;
+      arm.add(upper);
+      const forearm = new THREE.Group();
+      forearm.name = `${side}Forearm`;
+      forearm.position.y = -0.34;
+      forearm.rotation.x = side === "left" ? -0.72 : -0.6;
+      arm.add(forearm);
+      const lower = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.08, 0.2, 4, 8),
+        armor,
+      );
+      lower.position.y = -0.17;
+      lower.castShadow = !this.touchMode;
+      forearm.add(lower);
+      const glove = new THREE.Mesh(
+        new RoundedBoxGeometry(0.13, 0.14, 0.13, 3, 0.035),
+        rubber,
+      );
+      glove.position.set(0, -0.35, 0.015);
+      forearm.add(glove);
+      spine.add(arm);
+    };
+    createArm("left", -0.39);
+    createArm("right", 0.39);
 
     addBotMesh(
       new RoundedBoxGeometry(0.115, 0.115, 0.82, 3, 0.018),
       weapon,
-      [0.2, 1.2, 0.42],
+      [0.17, 0.02, 0.38],
       [-0.08, -0.04, 0],
+      spine,
     );
     addBotMesh(
       new THREE.CylinderGeometry(0.025, 0.03, 0.43, 9),
       weapon,
-      [0.2, 1.235, 1.02],
+      [0.17, 0.055, 0.98],
       [Math.PI / 2, 0, 0],
+      spine,
     );
     addBotMesh(
       new RoundedBoxGeometry(0.1, 0.22, 0.16, 2, 0.02),
       rubber,
-      [0.2, 1.02, 0.42],
+      [0.17, -0.16, 0.38],
       [-0.16, 0, 0],
+      spine,
     );
     addBotMesh(
       new RoundedBoxGeometry(0.14, 0.14, 0.26, 3, 0.02),
       rubber,
-      [0.2, 1.21, -0.05],
+      [0.17, 0.03, -0.09],
+      [0, 0, 0],
+      spine,
+    );
+    addBotMesh(
+      new RoundedBoxGeometry(0.055, 0.075, 0.17, 2, 0.015),
+      accent,
+      [0.17, 0.115, 0.25],
+      [0, 0, 0],
+      spine,
     );
     const muzzle = new THREE.Object3D();
     muzzle.name = "muzzle";
-    muzzle.position.set(0.2, 1.235, 1.26);
-    group.add(muzzle);
-    group.scale.setScalar(1.04);
+    muzzle.position.set(0.17, 0.055, 1.255);
+    spine.add(muzzle);
+
+    const shadowCanvas = document.createElement("canvas");
+    shadowCanvas.width = shadowCanvas.height = 64;
+    const shadowContext = shadowCanvas.getContext("2d")!;
+    const shadowGradient = shadowContext.createRadialGradient(32, 32, 2, 32, 32, 31);
+    shadowGradient.addColorStop(0, "rgba(9,7,5,.82)");
+    shadowGradient.addColorStop(0.46, "rgba(9,7,5,.38)");
+    shadowGradient.addColorStop(1, "rgba(9,7,5,0)");
+    shadowContext.fillStyle = shadowGradient;
+    shadowContext.fillRect(0, 0, 64, 64);
+    const shadowTexture = new THREE.CanvasTexture(shadowCanvas);
+    const shadowMaterial = new THREE.MeshBasicMaterial({
+      map: shadowTexture,
+      color: 0x261d17,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    });
+    const bodyShadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.92, 1.12),
+      shadowMaterial,
+    );
+    bodyShadow.rotation.x = -Math.PI / 2;
+    bodyShadow.position.set(0, 0.016, 0.02);
+    group.add(bodyShadow);
+    for (const side of [-1, 1]) {
+      const footShadow = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.27, 0.48),
+        shadowMaterial,
+      );
+      footShadow.rotation.x = -Math.PI / 2;
+      footShadow.position.set(side * 0.17, 0.02, 0.095);
+      group.add(footShadow);
+    }
+
     this.scene.add(group);
     return group;
   }
@@ -1982,6 +2138,10 @@ export class GameEngine {
     const spawn = bot.team === "blue" ? this.world.blueSpawn : this.world.redSpawn;
     const angle = this.random() * Math.PI * 2;
     const radius = initial ? 6 + this.random() * 16 : 5 + this.random() * 8;
+    bot.objectiveIndex =
+      bot.team === "blue"
+        ? Math.floor(this.random() * 3)
+        : 2 - Math.floor(this.random() * 3);
     bot.group.position.set(
       spawn.x + Math.cos(angle) * radius,
       0,
@@ -1993,10 +2153,26 @@ export class GameEngine {
     bot.alive = true;
     bot.target = null;
     bot.fireCooldown = 0.6 + this.random();
-    bot.objectiveIndex =
-      bot.team === "blue"
-        ? Math.floor(this.random() * 3)
-        : 2 - Math.floor(this.random() * 3);
+    const initialDirection = this.tempA
+      .copy(this.world.objectives[bot.objectiveIndex].position)
+      .sub(bot.group.position);
+    bot.group.rotation.set(
+      0,
+      Math.atan2(initialDirection.x, initialDirection.z),
+      0,
+    );
+    bot.visualRoot.position.set(0, 0, 0);
+    bot.visualRoot.rotation.set(0, 0, 0);
+    bot.pelvis.rotation.set(0, 0, 0);
+    bot.spine.rotation.set(0, 0, 0);
+    bot.leftLeg.rotation.set(0, 0, 0);
+    bot.rightLeg.rotation.set(0, 0, 0);
+    bot.leftLowerLeg.rotation.set(0, 0, 0);
+    bot.rightLowerLeg.rotation.set(0, 0, 0);
+    bot.leftFoot.rotation.set(0, 0, 0);
+    bot.rightFoot.rotation.set(0, 0, 0);
+    bot.leftArm.rotation.set(-0.68, 0, 0);
+    bot.rightArm.rotation.set(-0.68, 0, 0);
   }
 
   private updateBots(dt: number): void {
@@ -2039,44 +2215,108 @@ export class GameEngine {
         moveZ -= direction.x * bot.strafe * 0.42;
       }
 
+      let actualDistance = 0;
       if (shouldMove) {
         const speed = bot.speed * (hasCombatTarget ? 0.72 : 1);
+        const moveLength = Math.max(0.001, Math.hypot(moveX, moveZ));
+        moveX /= moveLength;
+        moveZ /= moveLength;
+
+        // Turn the navigation root first, then translate along its local +Z.
+        // This hard-couples velocity to the same forward axis used by the
+        // soldier mesh, so a bot cannot slide or run backward while yaw catches
+        // up with a newly selected target.
+        const desiredYaw = Math.atan2(moveX, moveZ);
+        const turnDelta = Math.atan2(
+          Math.sin(desiredYaw - bot.group.rotation.y),
+          Math.cos(desiredYaw - bot.group.rotation.y),
+        );
+        const maxTurn = 8.5 * dt;
+        bot.group.rotation.y += clamp(turnDelta, -maxTurn, maxTurn);
+        const remainingTurn = Math.atan2(
+          Math.sin(desiredYaw - bot.group.rotation.y),
+          Math.cos(desiredYaw - bot.group.rotation.y),
+        );
+        const alignment = clamp((Math.cos(remainingTurn) + 0.2) / 1.2, 0.16, 1);
+        const forwardX = Math.sin(bot.group.rotation.y);
+        const forwardZ = Math.cos(bot.group.rotation.y);
         const previousX = bot.group.position.x;
         const previousZ = bot.group.position.z;
-        const nextX = clamp(bot.group.position.x + moveX * speed * dt, -150, 150);
-        const nextZ = clamp(bot.group.position.z + moveZ * speed * dt, -150, 150);
+        const nextX = clamp(
+          bot.group.position.x + forwardX * speed * alignment * dt,
+          -MAP_BOUNDARY,
+          MAP_BOUNDARY,
+        );
+        const nextZ = clamp(
+          bot.group.position.z + forwardZ * speed * alignment * dt,
+          -MAP_BOUNDARY,
+          MAP_BOUNDARY,
+        );
         if (!this.botCollides(nextX, bot.group.position.z)) bot.group.position.x = nextX;
         else bot.strafe *= -1;
         if (!this.botCollides(bot.group.position.x, nextZ)) bot.group.position.z = nextZ;
         else bot.strafe *= -1;
         const actualMoveX = bot.group.position.x - previousX;
         const actualMoveZ = bot.group.position.z - previousZ;
-        const actualDistance = Math.hypot(actualMoveX, actualMoveZ);
-        bot.stride += dt * speed * 2.7;
-        bot.leftLeg.rotation.x = -Math.sin(bot.stride) * 0.58;
-        bot.rightLeg.rotation.x = Math.sin(bot.stride) * 0.58;
-        bot.leftArm.rotation.x = Math.sin(bot.stride + Math.PI) * 0.22 - 0.72;
-        bot.rightArm.rotation.x = Math.sin(bot.stride) * 0.22 - 0.72;
+        actualDistance = Math.hypot(actualMoveX, actualMoveZ);
         if (actualDistance > 0.0001) {
           const movementYaw = Math.atan2(actualMoveX, actualMoveZ);
-          bot.group.rotation.y = dampAngle(
-            bot.group.rotation.y,
-            movementYaw,
-            13,
-            dt,
-          );
+          // Axis-separated collision resolution can redirect a step along a
+          // wall. Face that accepted displacement immediately so even the
+          // fallback slide remains forward locomotion.
+          bot.group.rotation.y = movementYaw;
+          bot.stride += (actualDistance / 1.42) * Math.PI * 2;
         }
-      } else {
-        bot.leftLeg.rotation.x = damp(bot.leftLeg.rotation.x, 0, 8, dt);
-        bot.rightLeg.rotation.x = damp(bot.rightLeg.rotation.x, 0, 8, dt);
-        bot.leftArm.rotation.x = damp(bot.leftArm.rotation.x, -0.72, 8, dt);
-        bot.rightArm.rotation.x = damp(bot.rightArm.rotation.x, -0.72, 8, dt);
       }
-      const gaitBob = shouldMove
-        ? Math.abs(Math.sin(bot.stride * 2)) * 0.035
-        : 0;
-      bot.group.position.y =
-        terrainHeight(bot.group.position.x, bot.group.position.z) + gaitBob;
+
+      const locomoting = shouldMove && actualDistance > 0.0001;
+      if (locomoting) {
+        const phase = bot.stride;
+        const leftSwing = Math.sin(phase);
+        const rightSwing = Math.sin(phase + Math.PI);
+        const strideStrength = clamp(actualDistance / Math.max(0.001, dt * bot.speed), 0.2, 1);
+        const thighAmplitude = 0.38 + strideStrength * 0.16;
+        const leftKnee = clamp(
+          Math.max(0, -Math.sin(phase - 0.12)) * 0.78 +
+            Math.max(0, Math.sin(phase + 0.5)) * 0.08,
+          0,
+          0.84,
+        );
+        const rightKnee = clamp(
+          Math.max(0, -Math.sin(phase + Math.PI - 0.12)) * 0.78 +
+            Math.max(0, Math.sin(phase + Math.PI + 0.5)) * 0.08,
+          0,
+          0.84,
+        );
+        bot.leftLeg.rotation.x = -leftSwing * thighAmplitude;
+        bot.rightLeg.rotation.x = -rightSwing * thighAmplitude;
+        bot.leftLowerLeg.rotation.x = leftKnee;
+        bot.rightLowerLeg.rotation.x = rightKnee;
+        bot.leftFoot.rotation.x = -leftKnee * 0.64 + Math.sin(phase - 0.45) * 0.07;
+        bot.rightFoot.rotation.x =
+          -rightKnee * 0.64 + Math.sin(phase + Math.PI - 0.45) * 0.07;
+        bot.leftArm.rotation.x = -0.68 + leftSwing * 0.1;
+        bot.rightArm.rotation.x = -0.68 + rightSwing * 0.08;
+        bot.visualRoot.position.y = Math.abs(Math.sin(phase * 2)) * 0.033;
+        bot.pelvis.rotation.z = leftSwing * 0.035;
+        bot.pelvis.rotation.y = Math.sin(phase * 2) * 0.026;
+        bot.spine.rotation.z = -leftSwing * 0.025;
+      } else {
+        bot.leftLeg.rotation.x = damp(bot.leftLeg.rotation.x, 0, 10, dt);
+        bot.rightLeg.rotation.x = damp(bot.rightLeg.rotation.x, 0, 10, dt);
+        bot.leftLowerLeg.rotation.x = damp(bot.leftLowerLeg.rotation.x, 0, 11, dt);
+        bot.rightLowerLeg.rotation.x = damp(bot.rightLowerLeg.rotation.x, 0, 11, dt);
+        bot.leftFoot.rotation.x = damp(bot.leftFoot.rotation.x, 0, 11, dt);
+        bot.rightFoot.rotation.x = damp(bot.rightFoot.rotation.x, 0, 11, dt);
+        bot.leftArm.rotation.x = damp(bot.leftArm.rotation.x, -0.68, 9, dt);
+        bot.rightArm.rotation.x = damp(bot.rightArm.rotation.x, -0.68, 9, dt);
+        bot.visualRoot.position.y = damp(bot.visualRoot.position.y, 0, 12, dt);
+        bot.pelvis.rotation.z = damp(bot.pelvis.rotation.z, 0, 10, dt);
+        bot.pelvis.rotation.y = damp(bot.pelvis.rotation.y, 0, 10, dt);
+        bot.spine.rotation.z = damp(bot.spine.rotation.z, 0, 10, dt);
+      }
+
+      bot.group.position.y = terrainHeight(bot.group.position.x, bot.group.position.z);
       if (!shouldMove) {
         bot.group.rotation.y = dampAngle(
           bot.group.rotation.y,
@@ -2085,6 +2325,17 @@ export class GameEngine {
           dt,
         );
       }
+      const aimYaw = Math.atan2(direction.x, direction.z);
+      const relativeAim = Math.atan2(
+        Math.sin(aimYaw - bot.group.rotation.y),
+        Math.cos(aimYaw - bot.group.rotation.y),
+      );
+      bot.spine.rotation.y = damp(
+        bot.spine.rotation.y,
+        clamp(relativeAim, -0.52, 0.52),
+        12,
+        dt,
+      );
 
       if (hasCombatTarget && targetDistance < 58 && bot.fireCooldown <= 0) {
         bot.fireCooldown = 0.28 + this.random() * 0.42;

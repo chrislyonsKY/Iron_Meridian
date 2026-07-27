@@ -523,7 +523,7 @@ export default function GameClient() {
               <b>SPACE</b> JUMP
             </span>
             <span className="build-label">
-              FIELD BUILD 1.2.0 · MARKET WARFARE
+              FIELD BUILD 1.3.0 · KHARIF DENSITY PASS
             </span>
           </footer>
         </section>
